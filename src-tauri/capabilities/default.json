@@ -6,7 +6,8 @@
     "sistema",
     "ilha",
     "dock",
-    "dock-*"
+    "dock-*",
+    "assistive"
   ],
   "permissions": [
     "core:default",

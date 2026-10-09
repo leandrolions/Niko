@@ -105,8 +105,8 @@ export const useAgents = create<StateAgents>()(
           changeSignal(agent, (x) => x);
           const category = route ? CATEGORY_ROUTE[route] : undefined;
           if (noticeEnabled(category)) {
-            void playSound(sound, "avisos");
-            useIsland.getState().revelar({ texto: text, tipo: "alerta", agente: agent, aba: "avisos", categoria: category }, urgent ? 6000 : 4200, urgent ? "alta" : "normal");
+            const accepted = useIsland.getState().revelar({ texto: text, tipo: "alerta", agente: agent, aba: "avisos", categoria: category }, urgent ? 6000 : 4200, urgent ? "alta" : "normal");
+            if (accepted) void playSound(sound, "avisos");
           }
           window.setTimeout(() => set({ relogio: Date.now() }), ALERT_FRESH + 200);
           return id;

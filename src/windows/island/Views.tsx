@@ -9,7 +9,7 @@ import { useMedia, positionCurrent, coverBanner, backgroundCover } from "../../s
 import { usePomodoro, remainingCurrent, formatClock } from "../../state/pomodoro";
 import { useStudies } from "../../state/studies";
 import { useOrganization } from "../../state/organization";
-import { useCommunication } from "../../state/communication";
+import { failuresNotViews, useCommunication } from "../../state/communication";
 import { useAgents } from "../../state/agents";
 import { useConfig, type SectionToday } from "../../state/settings";
 import { useInterface } from "../../state/interface";
@@ -514,6 +514,7 @@ function SectionHabits() {
 export function ViewConnections() {
   const connections = useCommunication((s) => s.conexoes);
   const events = useCommunication((s) => s.eventosConexao);
+  const markFailuresViews = useCommunication((s) => s.markFailuresViews);
   const openWindow = useInterface((s) => s.openWindowConnection);
   const navigateTo = useInterface((s) => s.navigateTo);
   const [isOpen, setOpen] = useState<string | null>(null);
@@ -534,7 +535,7 @@ export function ViewConnections() {
               <div className="ilha-conexoes-grade">
                 {list.map((c, i) => {
                   const color = `#${BRANDS[c.id].hex}`;
-                  const failures = events.filter((e) => e.servico === c.id && e.tipo === "falha").length;
+                  const failures = failuresNotViews(c, events);
                   return (
                     <motion.button
                       key={c.id}
@@ -548,6 +549,7 @@ export function ViewConnections() {
                       whileTap={{ scale: 0.96 }}
                       onClick={() => {
                         void playSound("blip");
+                        if (failures > 0) markFailuresViews(c.id);
                         setOpen(c.id);
                       }}
                     >

@@ -292,7 +292,7 @@ export function typeComputer() {
   return cachedType;
 }
 
-const readerContinuous = createProcessPowerShell("niko-sistema", SCRIPT, "sistema_encerrado", ["-Continuous"]);
+const readerContinuous = createProcessPowerShell("niko-sistema", SCRIPT, "sistema_encerrado", ["-Continuo"]);
 
 export const stateSystem = async () => ((await readerContinuous.request({ acao: "estado" }, 20000)) as { r: unknown }).r;
 

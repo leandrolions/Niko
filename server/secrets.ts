@@ -46,9 +46,9 @@ ${CODE}
 $input = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $result = @{ ok = $true }
 switch ($input.acao) {
-  'gravar' { $result.ok = [NikoCredential]::Write($input.alvo, $input.segredo) }
-  'ler' { $result.valor = [NikoCredential]::Read($input.alvo) }
-  'apagar' { $result.ok = [NikoCredential]::Delete($input.alvo) }
+  'gravar' { $result.ok = [NikoCredential]::Write($input.target, $input.secret) }
+  'ler' { $result.valor = [NikoCredential]::Read($input.target) }
+  'apagar' { $result.ok = [NikoCredential]::Delete($input.target) }
 }
 $result | ConvertTo-Json -Compress
 `;

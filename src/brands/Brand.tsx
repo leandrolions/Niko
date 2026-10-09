@@ -6,6 +6,7 @@ import {
 import type { ServiceId } from "../types";
 import logoCodex from "./lobe/codex.svg";
 import logoAntigravity from "./lobe/antigravity.svg";
+import logoAmp from "./lobe/amp.svg";
 
 interface BrandIcon {
   title: string;
@@ -15,12 +16,17 @@ interface BrandIcon {
 
 export type BrandId = ServiceId | "anthropic" | "ollama" | "nvidia" | "opencode" | "qwen" | "gemini" | "openrouter" | "mistral" | "huggingface" | "deepseek" | "lmstudio" | "claudecode" | "copilot" | "kimi" | BrandMedia | ColoredBrand;
 
-export type ColoredBrand = "codex" | "antigravity";
+export type ColoredBrand = "codex" | "antigravity" | "amp";
 
 const BRANDS_COLORED: Record<ColoredBrand, { title: string; url: string }> = {
   codex: { title: "Codex", url: logoCodex },
   antigravity: { title: "Antigravity", url: logoAntigravity },
+  amp: { title: "Amp", url: logoAmp },
 };
+
+function isColored(brand: BrandId): brand is ColoredBrand {
+  return Object.hasOwn(BRANDS_COLORED, brand);
+}
 
 export type BrandMedia = "spotify" | "chrome" | "firefox" | "zen" | "youtube" | "youtubemusic" | "deezer" | "applemusic" | "tidal" | "soundcloud";
 
@@ -94,7 +100,7 @@ interface Props {
 }
 
 export function Brand({ marca: brand, tamanho: size = 18, monocromatica: monochrome = false }: Props) {
-  if (brand === "codex" || brand === "antigravity") {
+  if (isColored(brand)) {
     const colored = BRANDS_COLORED[brand];
     return <img src={colored.url} alt={colored.title} width={size} height={size} draggable={false} style={{ flex: "0 0 auto", filter: monochrome ? "grayscale(1) brightness(1.4)" : undefined }} />;
   }

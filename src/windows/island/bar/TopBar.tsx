@@ -168,7 +168,7 @@ export function TopBar({ visivel: visible, escala: scale, larguraDaIlha: widthIs
   useCursorOutside(useCallback(() => setAbout(false), []));
 
   useEffect(() => {
-    const { audio, rede: network, synchronizeAudio: synchronizeAudio, synchronizeNetwork: synchronizeNetwork } = useControlQuick.getState();
+    const { audio, rede: network, synchronizeAudio, synchronizeNetwork } = useControlQuick.getState();
     if (!audio) void synchronizeAudio();
     if (!network) void synchronizeNetwork();
   }, []);

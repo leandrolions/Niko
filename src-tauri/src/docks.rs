@@ -15,6 +15,7 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 static SELECTION: Mutex<String> = Mutex::new(String::new());
 static SIGNATURE: Mutex<String> = Mutex::new(String::new());
 static SYNCHRONIZATION_LOCK: Mutex<()> = Mutex::new(());
+static ISLAND_MONITOR: Mutex<String> = Mutex::new(String::new());
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -93,9 +94,19 @@ pub fn position_dock(window: &WebviewWindow, monitor: &Monitor) {
     let _ = window.set_position(destination);
 }
 
+pub fn monitor_island(selection: &str, list: &[NikoMonitor]) -> usize {
+    list.iter().position(|m| !selection.is_empty() && m.name == selection).unwrap_or(0)
+}
+
 pub fn position_island(app: &AppHandle) {
     let Some(window) = app.get_webview_window("ilha") else { return };
-    let Some((monitor, _)) = sorted_monitors(app).into_iter().next() else { return };
+    let selection = ISLAND_MONITOR.lock().map(|e| e.clone()).unwrap_or_default();
+    let mut monitors = sorted_monitors(app);
+    if monitors.is_empty() {
+        return;
+    }
+    let infos: Vec<NikoMonitor> = monitors.iter().map(|(_, i)| i.clone()).collect();
+    let (monitor, _) = monitors.swap_remove(monitor_island(&selection, &infos));
     let height = (ISLAND_HEIGHT * monitor.scale_factor()).round() as u32;
     let destination = *monitor.position();
     let _ = window.set_position(destination);
@@ -105,11 +116,21 @@ pub fn position_island(app: &AppHandle) {
 
 pub fn reposition_all(app: &AppHandle) {
     position_island(app);
+    position_assistive(app);
     for (monitor, info) in sorted_monitors(app) {
         if let Some(window) = app.get_webview_window(&info.label) {
             position_dock(&window, &monitor);
         }
     }
+}
+
+pub fn position_assistive(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("assistive") else { return };
+    let Some(monitor) = sorted_monitors(app).into_iter().next().map(|(m, _)| m) else { return };
+    let area = monitor.work_area();
+    let _ = window.set_position(area.position);
+    let _ = window.set_size(area.size);
+    let _ = window.set_position(area.position);
 }
 
 fn signature(list: &[(Monitor, NikoMonitor)]) -> String {
@@ -157,6 +178,7 @@ pub fn synchronize(app: &AppHandle) {
     }
 
     position_island(app);
+    position_assistive(app);
     if let Ok(mut current) = SIGNATURE.lock() {
         *current = signature(&monitors);
     }
@@ -173,6 +195,13 @@ pub async fn set_docks(app: AppHandle, enabled: bool, selection: String) {
         *current = selection.chars().take(200).collect();
     }
     synchronize(&app);
+}
+
+pub fn set_island_monitor(app: AppHandle, selection: String) {
+    if let Ok(mut current) = ISLAND_MONITOR.lock() {
+        *current = selection.chars().take(200).collect();
+    }
+    position_island(&app);
 }
 
 pub fn watch_monitors(app: AppHandle) {

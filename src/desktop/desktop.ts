@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import type { Route, ServiceId } from "../types";
 
-export type NameWindow = "sistema" | "ilha" | "dock";
+export type NameWindow = "sistema" | "ilha" | "dock" | "assistive";
 
 interface InternalsTauri {
   metadata?: { currentWindow?: { label?: string } };
@@ -16,6 +16,7 @@ export const LABEL: string | null = NATIVE ? internals?.metadata?.currentWindow?
 
 export function typeWindow(label: string): NameWindow {
   if (label === "dock" || label.startsWith("dock-")) return "dock";
+  if (label === "assistive") return "assistive";
   return label === "ilha" ? "ilha" : "sistema";
 }
 
@@ -122,6 +123,22 @@ export async function versionApp(): Promise<string> {
   }
 }
 
+export interface ResultShortcut {
+  acao: string;
+  teclas: string;
+  situacao: string;
+}
+
+export function setShortcutsGlobal(list: { acao: string; teclas: string }[]) {
+  return invokeNative<ResultShortcut[]>("definir_atalhos", { lista: list });
+}
+
+export async function listenShortcut(fn: (action: string) => void): Promise<() => void> {
+  if (!NATIVE || !LABEL) return () => undefined;
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<string>("niko://atalho", (e) => fn(e.payload), { target: { kind: "WebviewWindow", label: LABEL } });
+}
+
 export function reportAreaInteractive(rectangles: { x: number; y: number; w: number; h: number }[]) {
   return invokeNative("area_interativa", { janela: LABEL, retangulos: rectangles });
 }
@@ -131,10 +148,10 @@ export async function windowCurrent() {
   return getCurrentWindow();
 }
 
-export async function listenEvent(nameValue: string, fn: () => void): Promise<() => void> {
+export async function listenEvent(nameValue: string, fn: () => void, onlyDestaWindow = false): Promise<() => void> {
   if (!NATIVE) return () => undefined;
   const { listen } = await import("@tauri-apps/api/event");
-  return listen(nameValue, fn);
+  return listen(nameValue, fn, onlyDestaWindow && LABEL ? { target: { kind: "WebviewWindow", label: LABEL } } : undefined);
 }
 
 function sendPelaBridge(base: string, token: string | null) {
@@ -225,7 +242,7 @@ export function useCursorOutside(fn: () => void) {
     if (!NATIVE) return;
     let disable: () => void = () => undefined;
     let active = true;
-    void listenEvent("niko://cursor-fora", fn).then((f) => {
+    void listenEvent("niko://cursor-fora", fn, true).then((f) => {
       if (active) disable = f;
       else f();
     });
@@ -261,6 +278,14 @@ export interface NikoMonitor {
 
 export function setDocks(enabled: boolean, selection: string) {
   return invokeNative("definir_docks", { ligado: enabled, escolha: selection });
+}
+
+export function returnFocus() {
+  return invokeNative("devolver_foco");
+}
+
+export function setMonitorIsland(selection: string) {
+  return invokeNative("definir_monitor_da_ilha", { escolha: selection });
 }
 
 export function useMonitors(): NikoMonitor[] {

@@ -201,7 +201,7 @@ export const useInterface = create<StateInterface>()((set, get) => ({
   },
   notify: (text, undo) => {
     const id = generateId();
-    set((s) => ({ avisos: [...s.avisos.slice(-2), { id, texto: text, undo: undo }] }));
+    set((s) => ({ avisos: [...s.avisos.slice(-2), { id, texto: text, undo }] }));
     timers.set(id, window.setTimeout(() => get().dismissNotice(id), undo ? 6000 : 3200));
   },
   dismissNotice: (id) => {

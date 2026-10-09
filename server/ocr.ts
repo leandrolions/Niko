@@ -73,7 +73,7 @@ function runOcr(path: string): Promise<ResultOcr> {
   return new Promise((resolve, reject) => {
     execFile(
       "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Path", path],
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Caminho", path],
       { windowsHide: true, timeout: TIME_LIMIT, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" },
       (error, output) => {
         if (error && !output) return reject(new Error(error.killed ? "tempo_ocr" : "falha_ocr"));

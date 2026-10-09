@@ -2,7 +2,7 @@ import type { Plugin, Connect } from "./viteTypes";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { listProviders, saveProvider, removeProvider, testProvider, chat, validateMessages, validateTools } from "./ai";
-import { readUsage } from "./usage";
+import { readUsage, usageOfficial } from "./usage";
 import { readLastVersion } from "./updates";
 import { readAll, write, backupManual, resetDatabase } from "./database";
 import { requestMedia } from "./media";
@@ -10,9 +10,9 @@ import { requestWindows } from "./windows";
 import { stateConnections, readConnection, saveKeyConnection, removeKeyConnection, serviceValid, keyValue, SERVICES as SERVICES_CONNECTION } from "./connections";
 import { searchGmail, createDraftGmail, sendGmail } from "./gmail";
 import { readAgendaGoogle } from "./googleCalendar";
-import { readAudio, setVolume, setMute, adjustSession, readTheme, readStart, setTheme, openTool, actPower, readTray, openTray, directoryTray, stopTray } from "./quickControls";
+import { readAudio, setVolume, setMute, adjustSession, readTheme, readStart, setTheme, openTool, actPower, readTray, openTray, directoryTray, stopTray, listApps, iconsApps, openApp, openCommandSystem } from "./quickControls";
 import { ocrRequest } from "./ocr";
-import { receiveEventHook, isRouteHook, listenEvents, decideRequest, stateInstallation, previewInstallation, installHooks, removeHooks, openProject } from "./claude";
+import { receiveEventHook, isRouteHook, listenEvents, decideRequest, stateInstallation, previewInstallation, installHooks, removeHooks, openProject, trazerTerminal, isRouteStatus, receiveStatusClaude } from "./claude";
 import { isRouteAgent, receiveEventAgent, stateAgents, installAgent, removeAgent } from "./codingAgents";
 import { listFiles, receiveFile, sendContent, deleteFile, deleteFilesSubject, downloadFile, openFileProgram } from "./files";
 import { typeComputer, stateSystem, listNetworks, listBluetooth, readComputer, connectNetwork, forgetNetwork, disconnectNetwork, setBrightness, setRadio, openSettingsWindows } from "./system";
@@ -80,6 +80,7 @@ export const routes: Connect.NextHandleFunction = async (req, res, next) => {
   if (!url.pathname.startsWith("/ponte/")) return next();
   if (!hostLocal(req)) return respond(res, 403, { erro: "host_nao_permitido" });
   if (isRouteHook(url.pathname) && req.method === "POST") return receiveEventHook(req, res);
+  if (isRouteStatus(url.pathname) && req.method === "POST") return receiveStatusClaude(req, res);
   if (isRouteAgent(url.pathname) && req.method === "POST") return receiveEventAgent(req, res, url);
   if (!originTrusted(req)) return respond(res, 403, { erro: "origem_nao_permitida" });
   const path = url.pathname.slice("/ponte".length);
@@ -106,6 +107,7 @@ export const routes: Connect.NextHandleFunction = async (req, res, next) => {
     if (path === "/claude/eventos" && req.method === "GET") return listenEvents(req, res);
     if (path === "/claude/decisao" && req.method === "POST") return respond(res, 200, decideRequest(await readBody(req)));
     if (path === "/claude/abrir" && req.method === "POST") return respond(res, 200, openProject(await readBody(req)));
+    if (path === "/claude/terminal" && req.method === "POST") return respond(res, 200, await trazerTerminal(await readBody(req)));
     if (path === "/claude/instalacao" && req.method === "GET") return respond(res, 200, stateInstallation());
     if (path === "/claude/previa" && req.method === "GET") return respond(res, 200, previewInstallation(url.searchParams.get("acao") === "remover" ? "remover" : "instalar"));
     if (path === "/claude/instalar" && req.method === "POST") return respond(res, 200, installHooks(await readBody(req)));
@@ -178,6 +180,7 @@ export const routes: Connect.NextHandleFunction = async (req, res, next) => {
       return respond(res, 200, { pasta: backupManual() });
     }
     if (path === "/consumo" && req.method === "GET") {
+      if (url.searchParams.get("oficial") === "1") return respond(res, 200, usageOfficial());
       return respond(res, 200, await readUsage(url.searchParams.get("forcar") === "1"));
     }
     if (path === "/ia" && req.method === "POST") {
@@ -223,6 +226,10 @@ export const routes: Connect.NextHandleFunction = async (req, res, next) => {
         bandeja: openTray,
         bandejaPasta: directoryTray,
         bandejaEncerrar: stopTray,
+        apps: listApps,
+        iconesApps: iconsApps,
+        abrirApp: openApp,
+        comandoDoSistema: openCommandSystem,
       };
       if (req.method === "GET" && readResult[action]) return respond(res, 200, await readResult[action]());
       if (req.method === "POST" && writeValue[action]) return respond(res, 200, await writeValue[action](await readBody(req)));

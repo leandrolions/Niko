@@ -43,6 +43,29 @@ export interface RequestPermission {
   recebidoEm: string;
   alteracao?: ChangeFile;
   sugestoes: RuleSuggested[];
+  perguntas?: PerguntaClaude[];
+}
+
+export interface PerguntaClaude {
+  pergunta: string;
+  titulo: string;
+  varias: boolean;
+  opcoes: { rotulo: string; descricao: string }[];
+}
+
+export function perguntasInput(tool: string, input: Record<string, unknown>): PerguntaClaude[] | undefined {
+  if (tool !== "AskUserQuestion" || !Array.isArray(input.questions)) return undefined;
+  const perguntas: PerguntaClaude[] = [];
+  for (const q of input.questions) {
+    const p = (q ?? {}) as Record<string, unknown>;
+    const options = (Array.isArray(p.options) ? p.options : [])
+      .map((o) => (o ?? {}) as Record<string, unknown>)
+      .filter((o) => text(o.label))
+      .map((o) => ({ rotulo: text(o.label), descricao: text(o.description) }));
+    if (!text(p.question) || options.length === 0) return undefined;
+    perguntas.push({ pergunta: text(p.question), titulo: text(p.header), varias: p.multiSelect === true, opcoes: options });
+  }
+  return perguntas.length ? perguntas : undefined;
 }
 
 const MAXIMUM_STEPS = 80;
@@ -268,7 +291,7 @@ export const useClaudeCode = create<StateClaude>((set, get) => ({
           const tool = text(d.tool_name) || "Tool";
           const input = (d.tool_input ?? {}) as Record<string, unknown>;
           session.estado = "aprovacao";
-          requests = [...requests.filter((p) => p.pedidoId !== e.pedidoId), { pedidoId: e.pedidoId, ferramentaDeCodigo: session.ferramenta, sessao: e.sessao, projeto: session.projeto, ferramenta: tool, alvo: targetTool(input), entrada: formatInput(input), recebidoEm: e.recebidoEm, alteracao: changeTool(tool, input), sugestoes: suggestionsEvent(d) }];
+          requests = [...requests.filter((p) => p.pedidoId !== e.pedidoId), { pedidoId: e.pedidoId, ferramentaDeCodigo: session.ferramenta, sessao: e.sessao, projeto: session.projeto, ferramenta: tool, alvo: targetTool(input), entrada: formatInput(input), recebidoEm: e.recebidoEm, alteracao: changeTool(tool, input), sugestoes: suggestionsEvent(d), perguntas: session.ferramenta === "claude" ? perguntasInput(tool, input) : undefined }];
           break;
         }
         case "Notification": {

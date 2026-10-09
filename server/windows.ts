@@ -24,28 +24,28 @@ public static class NikoWindows {
   [StructLayout(LayoutKind.Sequential)] public struct Rectangle { public int Left, Top, Right, Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
   [StructLayout(LayoutKind.Sequential)] public struct Placement { public int Size; public int Flags; public int Show; public Point Minimum; public Point Maximum; public Rectangle Normal; }
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct MonitorInfo { public int Size; public Rectangle Monitor; public Rectangle Work; public uint Flags; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device; }
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct InfoMonitor { public int Size; public Rectangle Monitor; public Rectangle Work; public uint Flags; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device; }
   [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint f);
   [DllImport("user32.dll")] static extern IntPtr MonitorFromRect(ref Rectangle r, uint f);
   [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr h, ref Placement p);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr m, ref MonitorInfo i);
-  [StructLayout(LayoutKind.Sequential, Pack = 4)] public struct PropertyKey { public Guid Formato; public uint Id; }
-  [StructLayout(LayoutKind.Sequential)] public struct PropertyValue { public ushort Type; public ushort R1, R2, R3; public IntPtr Pointer; public IntPtr Extra; }
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr m, ref InfoMonitor i);
+  [StructLayout(LayoutKind.Sequential, Pack = 4)] public struct KeyProperty { public Guid Formato; public uint Id; }
+  [StructLayout(LayoutKind.Sequential)] public struct ValueProperty { public ushort Type; public ushort R1, R2, R3; public IntPtr Pointer; public IntPtr Extra; }
   [HasImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(HasInterfaceType.InterfaceIsIUnknown)]
   interface IPropertyStore {
     [PreserveSig] int GetCount(out uint n);
-    [PreserveSig] int GetAt(uint i, out PropertyKey k);
-    [PreserveSig] int GetValue(ref PropertyKey k, out PropertyValue v);
-    [PreserveSig] int SetValue(ref PropertyKey k, ref PropertyValue v);
+    [PreserveSig] int GetAt(uint i, out KeyProperty k);
+    [PreserveSig] int GetValue(ref KeyProperty k, out ValueProperty v);
+    [PreserveSig] int SetValue(ref KeyProperty k, ref ValueProperty v);
     [PreserveSig] int Commit();
   }
   [DllImport("shell32.dll")] static extern int SHGetPropertyStoreForWindow(IntPtr h, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out IPropertyStore p);
-  [DllImport("ole32.dll")] static extern int PropVariantClear(ref PropertyValue v);
+  [DllImport("ole32.dll")] static extern int PropVariantClear(ref ValueProperty v);
   static readonly Guid FORMATO_APP = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3");
   static Guid INTERFACE_PROPERTIES = new Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99");
   static string ReadProperty(IPropertyStore p, uint id) {
-    var k = new PropertyKey { Formato = FORMATO_APP, Id = id };
-    PropertyValue v;
+    var k = new KeyProperty { Formato = FORMATO_APP, Id = id };
+    ValueProperty v;
     if (p.GetValue(ref k, out v) != 0) return null;
     string s = v.Type == 31 && v.Pointer != IntPtr.Zero ? Marshal.PtrToStringUni(v.Pointer) : null;
     PropVariantClear(ref v);
@@ -70,7 +70,7 @@ public static class NikoWindows {
       GetWindowPlacement(h, ref p);
       m = MonitorFromRect(ref p.Normal, 2);
     } else m = MonitorFromWindow(h, 2);
-    var i = new MonitorInfo();
+    var i = new InfoMonitor();
     i.Size = Marshal.SizeOf(i);
     return GetMonitorInfo(m, ref i) ? i.Device : "";
   }
@@ -177,12 +177,12 @@ while ($true) {
       foreach ($j in [NikoWindows]::List()) {
         if (-not $paths.ContainsKey($j.Pid)) {
           $p = Get-Process -Id $j.Pid -ErrorAction SilentlyContinue
-          $paths[$j.Pid] = @{ nome = $(if ($p) { $p.ProcessName } else { '' }); caminho = $(try { $p.Path } catch { $null }); descricao = $(try { $p.MainModule.FileVersionInfo.FileDescription } catch { $null }) }
+          $paths[$j.Pid] = @{ name = $(if ($p) { $p.ProcessName } else { '' }); caminho = $(try { $p.Path } catch { $null }); descricao = $(try { $p.MainModule.FileVersionInfo.FileDescription } catch { $null }) }
         }
         $info = $paths[$j.Pid]
-        if ($info.nome -eq 'niko' -or ($info.nome -eq 'ApplicationFrameHost' -and $j.Title -eq '')) { continue }
+        if ($info.name -eq 'niko' -or ($info.name -eq 'ApplicationFrameHost' -and $j.Title -eq '')) { continue }
         $iconGroup = IconGroup $j.IconGroup
-        $list += @{ id = [string]$j.Id; pid = $j.Pid; titulo = $j.Title; minimizada = $j.Minimized; ativa = $j.Active; app = $info.nome; nome = $(if ($info.descricao) { $info.descricao } else { $info.nome }); caminho = $info.caminho; icone = $(if ($iconGroup) { $iconGroup } else { Icon $info.caminho }); monitor = $j.Monitor; grupo = $j.Group; nomeDoGrupo = $j.NameGroup }
+        $list += @{ id = [string]$j.Id; pid = $j.Pid; titulo = $j.Title; minimizada = $j.Minimized; ativa = $j.Active; app = $info.name; name = $(if ($info.descricao) { $info.descricao } else { $info.name }); caminho = $info.caminho; icone = $(if ($iconGroup) { $iconGroup } else { Icon $info.caminho }); monitor = $j.Monitor; grupo = $j.Group; nomeDoGrupo = $j.NameGroup }
       }
       $r = @{ janelas = $list }
     }

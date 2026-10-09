@@ -4,6 +4,9 @@ import { storage, key } from "../bridge/storage";
 import type { AgentId, CardConfirmation, Route } from "../types";
 import type { CategorySound } from "../bridge/sounds";
 import { BACKGROUND_ACCENT, hexValid, mix } from "../utils/colors";
+import type { SearchEngine } from "../utils/appSearch";
+import { SHORTCUTS_DEFAULT, shortcutsWithDefault, type ActionGlobal } from "../utils/shortcuts";
+import { ASSISTIVE_DEFAULT, validateAssistive, type ConfigAssistive } from "../windows/assistive/rules";
 
 const ACCENT_DARK_DEFAULT = "#a78bfa";
 
@@ -105,6 +108,7 @@ export interface ConfigIsland {
   notificacoes: "todas" | "importantes" | "nenhuma";
   laterais: boolean;
   iconesDaBarra: Record<IconBar, boolean>;
+  monitor: string;
 }
 
 export type CategoryNotice = "lembretes" | "habitos" | "estudos" | "financas" | "conexoes" | "codigo" | "conquistas" | "consumo";
@@ -129,7 +133,9 @@ export interface Settings {
   gruposFechados: string[];
   blocosInicio: { id: BlockStart; visivel: boolean }[];
   ilha: ConfigIsland;
-  dock: { ativo: boolean; modo: ModeBorder; favoritos: Route[]; atalhos: ShortcutDock[]; ampliar: boolean; fundo: string; opacidade: number; monitores: string };
+  assistive: ConfigAssistive;
+  dock: { ativo: boolean; modo: ModeBorder; favoritos: Route[]; atalhos: ShortcutDock[]; ampliar: boolean; fundo: string; opacidade: number; monitores: string; buscador: SearchEngine };
+  atalhosGlobais: Record<ActionGlobal, string>;
   pomodoro: { foco: number; curta: number; longa: number; ciclos: number; autoProxima: boolean; tique: boolean };
   agua: { meta: number; copo: number };
   sons: { ligado: boolean; volume: number; categorias: Record<CategorySound, boolean> };
@@ -183,8 +189,11 @@ export const CONFIG_DEFAULT: Settings = {
     notificacoes: "importantes",
     laterais: true,
     iconesDaBarra: { rede: true, volume: true, bateria: true },
+    monitor: "",
   },
-  dock: { ativo: true, modo: "inteligente", favoritos: ["chat", "journal", "estudos", "financas", "calendario"], atalhos: [], ampliar: true, fundo: BACKGROUND_DEFAULT_BORDERS, opacidade: 1, monitores: "todos" },
+  dock: { ativo: true, modo: "inteligente", favoritos: ["chat", "journal", "estudos", "financas", "calendario"], atalhos: [], ampliar: true, fundo: BACKGROUND_DEFAULT_BORDERS, opacidade: 1, monitores: "todos", buscador: "google" },
+  assistive: ASSISTIVE_DEFAULT,
+  atalhosGlobais: SHORTCUTS_DEFAULT,
   pomodoro: { foco: 25, curta: 5, longa: 15, ciclos: 4, autoProxima: false, tique: false },
   agua: { meta: 2000, copo: 250 },
   sons: {
@@ -220,6 +229,7 @@ export const CONFIG_DEFAULT: Settings = {
 interface ActionsConfig {
   set: (partial: Partial<Settings>) => void;
   setIsland: (partial: Partial<ConfigIsland>) => void;
+  setAssistive: (partial: Partial<ConfigAssistive>) => void;
   restore: () => void;
 }
 
@@ -229,6 +239,7 @@ export const useConfig = create<Settings & ActionsConfig>()(
       ...CONFIG_DEFAULT,
       set: (partial) => set(partial),
       setIsland: (partial) => set((s) => ({ ilha: { ...s.ilha, ...partial } })),
+      setAssistive: (partial) => set((s) => ({ assistive: validateAssistive({ ...s.assistive, ...partial }) })),
       restore: () => set({ ...CONFIG_DEFAULT, primeiraExecucaoFeita: true }),
     }),
     {
@@ -309,6 +320,8 @@ export const useConfig = create<Settings & ActionsConfig>()(
             ],
           },
           dock: { ...CONFIG_DEFAULT.dock, ...saved.dock },
+          assistive: validateAssistive(saved.assistive),
+          atalhosGlobais: shortcutsWithDefault(saved.atalhosGlobais),
           pomodoro: { ...CONFIG_DEFAULT.pomodoro, ...saved.pomodoro },
           agua: { ...CONFIG_DEFAULT.agua, ...saved.agua },
           sons: { ...CONFIG_DEFAULT.sons, ...saved.sons },

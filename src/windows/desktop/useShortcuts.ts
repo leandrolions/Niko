@@ -7,6 +7,7 @@ import { useRoutine } from "../../state/routine";
 import { playSound } from "../../bridge/sounds";
 import { T } from "../../i18n/ptBR";
 import { routeEnabled } from "../../utils/features";
+import { ACTIONS_GLOBAL, matchesWith, type ActionGlobal } from "../../utils/shortcuts";
 
 function atFieldText(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -23,33 +24,27 @@ export function useShortcuts() {
       const cfg = useConfig.getState();
       const key = e.key.toLowerCase();
 
-      if (e.ctrlKey && e.altKey) {
-        if (e.code === "Space") {
+      const action = ACTIONS_GLOBAL.find((a) => cfg.atalhosGlobais[a] && matchesWith(e, cfg.atalhosGlobais[a]));
+      if (action) {
+        const execute: Partial<Record<ActionGlobal, () => void>> = {
+          captura: () => ui.openCapture(true),
+          pomodoro: () => {
+            usePomodoro.getState().toggle();
+            void playSound("blip");
+          },
+          midia: () => useMedia.getState().toggle(),
+          privacidade: () => cfg.set({ privacidade: !cfg.privacidade }),
+          naoPerturbe: () => cfg.set({ naoPerturbe: !cfg.naoPerturbe }),
+          sistema: () => {
+            const visible = ui.sistemaAberto && !ui.sistemaMinimizado;
+            ui.setSystem(visible ? { sistemaMinimizado: true } : { sistemaAberto: true, sistemaMinimizado: false });
+            if (!visible) ui.focusSystem();
+          },
+        };
+        const fn = execute[action];
+        if (fn) {
           e.preventDefault();
-          ui.openCapture(true);
-          return;
-        }
-        if (key === "p") {
-          e.preventDefault();
-          usePomodoro.getState().toggle();
-          void playSound("blip");
-          return;
-        }
-        if (key === "m") {
-          e.preventDefault();
-          useMedia.getState().toggle();
-          return;
-        }
-        if (key === "h") {
-          e.preventDefault();
-          cfg.set({ privacidade: !cfg.privacidade });
-          return;
-        }
-        if (key === "n") {
-          e.preventDefault();
-          const visible = ui.sistemaAberto && !ui.sistemaMinimizado;
-          ui.setSystem(visible ? { sistemaMinimizado: true } : { sistemaAberto: true, sistemaMinimizado: false });
-          if (!visible) ui.focusSystem();
+          fn();
           return;
         }
       }

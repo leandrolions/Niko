@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readArguments, readVersions, validateVersions, validateTag, planVersion, synchronizeVersion, checkPublication, validateArtifacts } from "./release-version.mjs";
+import { readArguments, readVersions, validateVersions, validateTag, planVersion, synchronizeVersion, checkPublication, validateArtifacts, mountManifest } from "./release-version.mjs";
 
 function project(t, versions = ["0.1.1", "0.1.1", "0.1.1", "0.1.1"]) {
   const root = mkdtempSync(join(tmpdir(), "niko-release-teste-"));
@@ -25,14 +25,6 @@ test("Requires an explicit version and keeps release notes separate", () => {
   assert.equal(readArguments(["--versao=0.1.2", "Novidades"]).notas, "Novidades");
   assert.equal(readArguments(["--verificar"]).verificar, true);
   assert.equal(readArguments(["--ajuda"]).ajuda, true);
-});
-
-test("Accepts English release flags and preserves legacy flag behavior", () => {
-  assert.deepEqual(readArguments(["--version", "0.1.2", "--check", "--rebuild", "Notes"]),
-    readArguments(["--versao", "0.1.2", "--verificar", "--recompilar", "Notes"]));
-  assert.deepEqual(readArguments(["--version=0.1.2"]), readArguments(["--versao=0.1.2"]));
-  assert.deepEqual(readArguments(["--help"]), readArguments(["--ajuda"]));
-  assert.throws(() => readArguments(["--version", "0.1.2", "--versao", "0.1.3"]), /uma vez/);
 });
 
 test("Rejects invalid versions, unknown arguments and duplicate version arguments", () => {
@@ -135,4 +127,28 @@ test("Requires installer and signature artifacts from the correct version and cu
   assert.throws(() => validateArtifacts(root, "0.1.2", Date.now()), /build atual/);
   writeFileSync(signature, "   ");
   assert.throws(() => validateArtifacts(root, "0.1.2", Date.now()), /vazia/);
+});
+
+test("Accepts MSI artifacts and builds a manifest with one entry per installer", (t) => {
+  const root = project(t);
+  const directory = join(root, "src-tauri", "target", "release", "bundle", "msi");
+  mkdirSync(directory, { recursive: true });
+  assert.throws(() => validateArtifacts(root, "0.1.2", Date.now(), "msi"), /não foi gerado/);
+  writeFileSync(join(directory, "Niko_0.1.2_x64_pt-BR.msi"), "msi de teste");
+  writeFileSync(join(directory, "Niko_0.1.2_x64_pt-BR.msi.sig"), "assinatura msi");
+  const msi = validateArtifacts(root, "0.1.2", Date.now(), "msi");
+  const nsis = { instalador: "Niko_0.1.2_x64-setup.exe", assinatura: "assinatura nsis" };
+  const manifest = mountManifest("0.1.2", "", nsis, msi, new Date("2026-10-08T12:00:00Z"));
+  assert.equal(manifest.notes, "Niko 0.1.2");
+  assert.deepEqual(manifest.platforms["windows-x86_64"], manifest.platforms["windows-x86_64-nsis"]);
+  assert.equal(manifest.platforms["windows-x86_64-nsis"].url, "https://github.com/vitorcgo/niko/releases/download/v0.1.2/Niko_0.1.2_x64-setup.exe");
+  assert.deepEqual(manifest.platforms["windows-x86_64-msi"], { signature: "assinatura msi", url: "https://github.com/vitorcgo/niko/releases/download/v0.1.2/Niko_0.1.2_x64_pt-BR.msi" });
+});
+
+test("Accepts English release flags and preserves legacy flag behavior", () => {
+  assert.deepEqual(readArguments(["--version", "0.1.2", "--check", "--rebuild", "Notes"]),
+    readArguments(["--versao", "0.1.2", "--verificar", "--recompilar", "Notes"]));
+  assert.deepEqual(readArguments(["--version=0.1.2"]), readArguments(["--versao=0.1.2"]));
+  assert.deepEqual(readArguments(["--help"]), readArguments(["--ajuda"]));
+  assert.throws(() => readArguments(["--version", "0.1.2", "--versao", "0.1.3"]), /uma vez/);
 });

@@ -2,9 +2,15 @@
 //! Keep command names and argument keys stable; use English in the implementation.
 
 use super::*;
+use super::shortcuts::{ShortcutRequest, ShortcutResult};
 use super::docks::NikoMonitor;
 use super::foreground_window::ForegroundState;
 use super::thumbnails::{Thumbnail, Thumbnails};
+
+#[tauri::command]
+pub fn definir_atalhos(app: AppHandle, lista: Vec<ShortcutRequest>) -> Vec<ShortcutResult> {
+    shortcuts::set_shortcuts(app, lista)
+}
 
 #[tauri::command]
 pub fn reservar_dock(window: WebviewWindow, reservar: bool) {
@@ -24,6 +30,11 @@ pub fn monitores(app: AppHandle) -> Vec<NikoMonitor> {
 #[tauri::command]
 pub async fn definir_docks(app: AppHandle, ligado: bool, escolha: String) {
     docks::set_docks(app, ligado, escolha).await
+}
+
+#[tauri::command]
+pub fn definir_monitor_da_ilha(app: AppHandle, escolha: String) {
+    docks::set_island_monitor(app, escolha)
 }
 
 #[tauri::command]
@@ -59,6 +70,11 @@ pub fn liberar_sistema_inicial(app: AppHandle) {
 #[tauri::command]
 pub fn tempo_ocioso_ms() -> u64 {
     super::idle_time_ms()
+}
+
+#[tauri::command]
+pub fn devolver_foco() {
+    super::restore_focus()
 }
 
 #[tauri::command]

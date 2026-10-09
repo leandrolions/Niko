@@ -51,7 +51,7 @@ function color(source: Source): CSSProperties {
   return { "--cor": COLOR_SOURCE[source] } as CSSProperties;
 }
 
-function changedAlgo(e: EventType, occurrence: string, newItems: DataEvent) {
+function changedSomething(e: EventType, occurrence: string, newItems: DataEvent) {
   return e.titulo !== newItems.titulo || occurrence !== newItems.data || (e.hora ?? "") !== (newItems.hora ?? "") || e.tipo !== newItems.tipo || e.repeticao !== newItems.repeticao;
 }
 
@@ -337,7 +337,7 @@ export default function Calendar() {
       createEvent(newItems);
       return;
     }
-    if (!changedAlgo(target.evento, target.ocorrencia, newItems)) return;
+    if (!changedSomething(target.evento, target.ocorrencia, newItems)) return;
     requestOrApply(target, newItems, T.calendario.escopoEditar(target.evento.titulo), T.calendario.atualizado(newItems.titulo));
   };
 

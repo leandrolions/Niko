@@ -9,6 +9,8 @@ export const BRAND_TOOL: Record<CodingTool, BrandId> = {
   opencode: "opencode",
   antigravity: "antigravity",
   kimi: "kimi",
+  gemini: "gemini",
+  amp: "amp",
 };
 
 export const COLOR_TOOL: Record<CodingTool, string> = {
@@ -18,6 +20,8 @@ export const COLOR_TOOL: Record<CodingTool, string> = {
   opencode: "#cfcfcf",
   antigravity: "#3186ff",
   kimi: "#5b8cff",
+  gemini: "#8e75b2",
+  amp: "#f34e3f",
 };
 
 export function nameTool(tool: CodingTool | undefined): string {

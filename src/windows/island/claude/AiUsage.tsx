@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
-import { readUsage, type UsageTool } from "../../../bridge/localBridge";
+import { readUsage, readUsageOfficial, type UsageTool } from "../../../bridge/localBridge";
 import { useConfig } from "../../../state/settings";
 import { missingTo, levelUsage, labelWindow } from "../../../utils/usage";
 import { Brand, type BrandId } from "../../../brands/Brand";
@@ -69,14 +69,10 @@ export function AiUsage() {
   const [tools, setTools] = useState<UsageTool[]>([]);
 
   useEffect(() => {
-    if (!readPlans) {
-      setTools([]);
-      return;
-    }
     let alive = true;
     const read = () => {
       if (document.hidden) return;
-      readUsage()
+      (readPlans ? readUsage() : readUsageOfficial())
         .then((r) => alive && setTools(r.ferramentas.filter((f) => f.situacao === "ok" && f.janelas.length > 0)))
         .catch(() => undefined);
     };

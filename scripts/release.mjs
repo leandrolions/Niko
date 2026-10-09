@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { readArguments, readVersions, validateVersions, validateTag, planVersion, synchronizeVersion, checkPublication, validateArtifacts } from "./release-version.mjs";
+import { readArguments, readVersions, validateVersions, validateTag, planVersion, synchronizeVersion, checkPublication, validateArtifacts, mountManifest } from "./release-version.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -44,18 +44,12 @@ async function release() {
     env: { ...process.env, TAURI_SIGNING_PRIVATE_KEY: keyConfigured || readFileSync(key, "utf8"), TAURI_SIGNING_PRIVATE_KEY_PASSWORD: process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "" },
   });
   validateVersions(readVersions(root), version);
-  const { pasta: directory, instalador: installer, assinatura: signature } = validateArtifacts(root, version, start);
-  const manifest = {
-    version: version,
-    notes: options.notas || `Niko ${version}`,
-    pub_date: new Date().toISOString(),
-    platforms: {
-      "windows-x86_64": { signature: signature, url: `https://github.com/vitorcgo/niko/releases/download/v${version}/${installer}` },
-    },
-  };
-  writeFileSync(join(directory, "latest.json"), JSON.stringify(manifest, null, 2));
+  const nsis = validateArtifacts(root, version, start, "nsis");
+  const msi = validateArtifacts(root, version, start, "msi");
+  const manifest = mountManifest(version, options.notas, nsis, msi);
+  writeFileSync(join(nsis.pasta, "latest.json"), JSON.stringify(manifest, null, 2));
   if (options.recompilar) console.log("Recompilação concluída. Isso não cria nem substitui uma release no GitHub.");
-  console.log(`\nPronto. Para a release v${version} em github.com/vitorcgo/niko, os arquivos são:\n  ${join(directory, installer)}\n  ${join(directory, "latest.json")}\nNada foi publicado automaticamente.`);
+  console.log(`\nPronto. Para a release v${version} em github.com/vitorcgo/niko, os arquivos são:\n  ${join(nsis.pasta, nsis.instalador)}\n  ${join(msi.pasta, msi.instalador)}\n  ${join(nsis.pasta, "latest.json")}\nNada foi publicado automaticamente.`);
 }
 
 try {

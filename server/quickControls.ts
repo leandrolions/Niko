@@ -9,7 +9,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 
 public static class NikoControl {
-  [HasImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class DeviceEnumerator { }
+  [HasImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class EnumeradorDispositivos { }
 
   [HasImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(HasInterfaceType.InterfaceIsIUnknown)]
   interface IMMDeviceEnumerator {
@@ -112,7 +112,7 @@ public static class NikoControl {
   public class Session { public uint Pid; public int Volume; public bool Mute; public bool System; public int State; }
 
   static IMMDevice Device(int flow) {
-    var enumerator = (IMMDeviceEnumerator)new DeviceEnumerator();
+    var enumerator = (IMMDeviceEnumerator)new EnumeradorDispositivos();
     IMMDevice device;
     if (enumerator.GetDefaultAudioEndpoint(flow, PAPEL_MULTIMIDIA, out device) != 0) return null;
     return device;
@@ -305,7 +305,7 @@ function InfoProcess($processId) {
     try { $path = $p.Path } catch { }
     try { $description = $p.MainModule.FileVersionInfo.FileDescription } catch { }
   }
-  $info = @{ nome = $(if ($description) { $description } elseif ($p) { $p.ProcessName } else { '' }); caminho = $path }
+  $info = @{ name = $(if ($description) { $description } elseif ($p) { $p.ProcessName } else { '' }); path = $path }
   $processes[$processId] = $info
   return $info
 }
@@ -322,7 +322,7 @@ function IconProcess($path) {
 function Endpoint($flow) {
   try {
     $e = [NikoControl]::ReadEndpoint($flow)
-    if ($e) { return @{ volume = $e.Volume; mudo = $e.Mute } }
+    if ($e) { return @{ volume = $e.Volume; mute = $e.Mute } }
   } catch { }
   return $null
 }
@@ -331,11 +331,11 @@ function Audio {
   $sessions = @()
   try {
     foreach ($s in [NikoControl]::ListSessions()) {
-      if ($s.System) { $info = @{ nome = ''; caminho = $null } } else { $info = InfoProcess ([int]$s.Pid) }
-      $sessions += @{ pid = $s.Pid; sistema = $s.System; ativa = ($s.State -eq 1); volume = $s.Volume; mudo = $s.Mute; nome = $info.nome; caminho = $info.caminho; icone = (IconProcess $info.caminho) }
+      if ($s.System) { $info = @{ name = ''; path = $null } } else { $info = InfoProcess ([int]$s.Pid) }
+      $sessions += @{ pid = $s.Pid; sistema = $s.System; ativa = ($s.State -eq 1); volume = $s.Volume; mute = $s.Mute; name = $info.name; path = $info.path; icone = (IconProcess $info.path) }
     }
   } catch { }
-  return @{ saida = (Endpoint 0); entrada = (Endpoint 1); sessoes = $sessions }
+  return @{ output = (Endpoint 0); entrada = (Endpoint 1); sessoes = $sessions }
 }
 
 function ThemeDark {
@@ -372,7 +372,7 @@ function Tray {
     if ($previous -and ($previous.icone -or -not $icon)) { continue }
     $info = InfoProcess ([int]$running[$key][0].Id)
     $hint = [string]$v.InitialTooltip
-    $items[$key] = @{ caminho = $path; nome = $(if ($info.nome) { $info.nome } else { [IO.Path]::GetFileNameWithoutExtension($path) }); dica = $(if ($hint) { $hint } else { $null }); icone = $icon }
+    $items[$key] = @{ path = $path; name = $(if ($info.name) { $info.name } else { [IO.Path]::GetFileNameWithoutExtension($path) }); dica = $(if ($hint) { $hint } else { $null }); icone = $icon }
     $trayKnown[$key] = $path
   }
   return @{ itens = @($items.Values) }
@@ -411,6 +411,120 @@ function StopTray($path) {
   return $targets.Count
 }
 
+$COMMANDS_SYSTEM = @{
+  rede = 'ms-settings:network'
+  wifi = 'ms-settings:network-wifi'
+  bluetooth = 'ms-settings:bluetooth'
+  som = 'ms-settings:sound'
+  tela = 'ms-settings:display'
+  configuracoes = 'ms-settings:'
+  atualizacoes = 'ms-settings:windowsupdate'
+  tarefas = (Join-Path $env:WINDIR 'System32\Taskmgr.exe')
+  adaptadores = (Join-Path $env:WINDIR 'System32\ncpa.cpl')
+  terminal = (Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe')
+  arquivos = (Join-Path $env:WINDIR 'explorer.exe')
+  painel = (Join-Path $env:WINDIR 'System32\control.exe')
+}
+$TIME_CACHE_APPS = 300
+$appsInstalled = @{}
+$listApps = $null
+$appsLidosAt = [DateTime]::MinValue
+$iconsApps = @{}
+$LIMIT_ICONS_GUARDADOS = 400
+
+function ExeApp($id) {
+  if ($id -like 'lnk:*') { return $null }
+  $c = [NikoControl]::ResolvePath([string]$id)
+  if ($c -match '(?i)^[a-z]:\\.+\.exe$' -and (Test-Path -LiteralPath $c -PathType Leaf)) { return $c }
+  return $null
+}
+
+function AppsMenuStart {
+  $items = New-Object System.Collections.ArrayList
+  $seen = @{}
+  try {
+    foreach ($a in @(Get-StartApps -ErrorAction Stop)) {
+      $name = [string]$a.Name; $id = [string]$a.AppID
+      if (-not $name -or -not $id -or $seen.ContainsKey($id)) { continue }
+      $seen[$id] = $true
+      [void]$items.Add(@{ id = $id; name = $name; admin = [bool](ExeApp $id) })
+    }
+  } catch { }
+  if ($items.Count -gt 0) { return $items }
+  $directories = @((Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'), (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'))
+  foreach ($directory in $directories) {
+    foreach ($f in @(Get-ChildItem -LiteralPath $directory -Filter *.lnk -Recurse -ErrorAction SilentlyContinue)) {
+      $id = 'lnk:' + $f.FullName
+      if ($seen.ContainsKey($id)) { continue }
+      $seen[$id] = $true
+      [void]$items.Add(@{ id = $id; name = $f.BaseName; admin = $false })
+    }
+  }
+  return $items
+}
+
+function ListApps($force) {
+  if (-not $force -and $script:listaDeApps -and ((Get-Date) - $script:appsLidosEm).TotalSeconds -lt $TIME_CACHE_APPS) { return $script:listaDeApps }
+  $items = @(AppsMenuStart | Where-Object { $_.name -notmatch '(?i)^(uninstall|desinstalar)\b' } | Sort-Object { $_.name })
+  $script:appsInstalados = @{}
+  foreach ($a in $items) { $script:appsInstalados[$a.id] = $a }
+  $script:listaDeApps = @{ apps = $items }
+  $script:appsLidosEm = Get-Date
+  return $script:listaDeApps
+}
+
+function AppConhecido($id) {
+  if (-not $script:appsInstalados.ContainsKey($id)) { ListApps $true | Out-Null }
+  if (-not $script:appsInstalados.ContainsKey($id)) { throw 'app_desconhecido' }
+}
+
+function IconAppInstalled($id) {
+  if (-not $script:appsInstalados.ContainsKey($id)) { return $null }
+  if ($iconsApps.ContainsKey($id)) { return $iconsApps[$id] }
+  if ($iconsApps.Count -ge $LIMIT_ICONS_GUARDADOS) { $iconsApps.Clear() }
+  $value = $null
+  try {
+    if ($id -like 'lnk:*') { $value = [NikoControl]::IconApp($id.Substring(4), 32) }
+    else { $value = [NikoControl]::IconApp('shell:AppsFolder\' + $id, 32) }
+  } catch { }
+  if (-not $value) { $exe = ExeApp $id; if ($exe) { try { $value = [NikoControl]::IconApp($exe, 32) } catch { } } }
+  $iconsApps[$id] = $value
+  return $value
+}
+
+function OwnerConnection($portLocal, $portRemota) {
+  $c = Get-NetTCPConnection -LocalPort ([int]$portLocal) -RemotePort ([int]$portRemota) -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -gt 0 } | Select-Object -First 1
+  if ($c) { return [int]$c.OwningProcess }
+  return 0
+}
+
+function FocusWindowProcess($processId) {
+  $current = [int]$processId
+  for ($level = 0; $level -lt 10 -and $current -gt 4; $level++) {
+    $p = Get-Process -Id $current -ErrorAction SilentlyContinue
+    if ($p -and $p.MainWindowHandle -ne [IntPtr]::Zero -and $p.ProcessName -notmatch '^(explorer|niko)$') {
+      [NikoControl]::Focus($p.MainWindowHandle) | Out-Null
+      return $p.ProcessName
+    }
+    $info = Get-CimInstance Win32_Process -Filter "ProcessId=$current" -ErrorAction SilentlyContinue
+    if (-not $info) { break }
+    $current = [int]$info.ParentProcessId
+  }
+  throw 'sem_janela'
+}
+
+function OpenApp($id, $admin) {
+  AppConhecido $id
+  if ($id -like 'lnk:*') { Start-Process -FilePath $id.Substring(4); return }
+  if ($admin) {
+    $exe = ExeApp $id
+    if (-not $exe) { throw 'sem_admin' }
+    Start-Process -FilePath $exe -WorkingDirectory ([IO.Path]::GetDirectoryName($exe)) -Verb RunAs
+    return
+  }
+  Start-Process ('shell:AppsFolder\' + $id)
+}
+
 while ($true) {
   $line = [Console]::In.ReadLine()
   if ($null -eq $line) { break }
@@ -418,11 +532,11 @@ while ($true) {
     $request = $line | ConvertFrom-Json
     switch ($request.acao) {
       'audio' { $r = Audio }
-      'volume' { $r = @{ ok = [NikoControl]::SetVolume([int]$request.fluxo, [int]$request.valor) } }
-      'mudo' { $r = @{ ok = [NikoControl]::SetMute([int]$request.fluxo, [bool]$request.mudo) } }
+      'volume' { $r = @{ ok = [NikoControl]::SetVolume([int]$request.flow, [int]$request.value) } }
+      'mudo' { $r = @{ ok = [NikoControl]::SetMute([int]$request.flow, [bool]$request.mute) } }
       'sessao' {
         $pids = [uint32[]]@($request.pids | ForEach-Object { [uint32]$_ })
-        $r = @{ ajustadas = [NikoControl]::AdjustSessions($pids, [int]$request.volume, [int]$request.mudo) }
+        $r = @{ ajustadas = [NikoControl]::AdjustSessions($pids, [int]$request.volume, [int]$request.mute) }
       }
       'tema' { $r = @{ escuro = (ThemeDark) } }
       'iniciar' { $r = @{ aberto = [NikoControl]::StartOpen() } }
@@ -434,15 +548,15 @@ while ($true) {
         $r = @{ escuro = (ThemeDark) }
       }
       'ferramenta' {
-        if ($request.nome -eq 'captura') { Start-Process 'ms-screenclip:' }
-        elseif ($request.nome -eq 'teclado') { Start-Process (Join-Path $env:WINDIR 'System32\osk.exe') }
-        elseif ($request.nome -eq 'iniciar') {
+        if ($request.name -eq 'captura') { Start-Process 'ms-screenclip:' }
+        elseif ($request.name -eq 'teclado') { Start-Process (Join-Path $env:WINDIR 'System32\osk.exe') }
+        elseif ($request.name -eq 'iniciar') {
           if ($request.abertoAntes -eq $true -or [NikoControl]::StartOpen()) { [NikoControl]::CloseStart() }
           else { [NikoControl]::OpenStart() }
         }
-        elseif ($request.nome -eq 'papelDeParede') { Start-Process 'ms-settings:personalization-background' }
+        elseif ($request.name -eq 'papelDeParede') { Start-Process 'ms-settings:personalization-background' }
         else { throw 'ferramenta_desconhecida' }
-        if ($request.nome -eq 'iniciar') {
+        if ($request.name -eq 'iniciar') {
           Start-Sleep -Milliseconds 150
           $r = @{ ok = $true; aberto = [NikoControl]::StartOpen() }
         } else { $r = @{ ok = $true } }
@@ -457,9 +571,24 @@ while ($true) {
         }
       }
       'bandeja' { $r = Tray }
-      'abrirDaBandeja' { OpenTray $request.caminho; $r = @{ ok = $true } }
-      'pastaDaBandeja' { ShowDirectory $request.caminho; $r = @{ ok = $true } }
-      'encerrarDaBandeja' { $r = @{ ok = $true; encerrados = (StopTray $request.caminho) } }
+      'abrirDaBandeja' { OpenTray $request.path; $r = @{ ok = $true } }
+      'pastaDaBandeja' { ShowDirectory $request.path; $r = @{ ok = $true } }
+      'encerrarDaBandeja' { $r = @{ ok = $true; encerrados = (StopTray $request.path) } }
+      'apps' { $r = (ListApps ($request.force -eq $true)).Clone() }
+      'iconesApps' {
+        $list = @()
+        foreach ($id in @($request.ids)) { $list += @{ id = [string]$id; icone = (IconAppInstalled ([string]$id)) } }
+        $r = @{ icones = $list }
+      }
+      'abrirApp' { OpenApp ([string]$request.id) ($request.admin -eq $true); $r = @{ ok = $true } }
+      'donoDaConexao' { $r = @{ pid = (OwnerConnection $request.portaLocal $request.portaRemota) } }
+      'focarProcesso' { $r = @{ ok = $true; window = (FocusWindowProcess $request.pid) } }
+      'comandoDoSistema' {
+        $target = $COMMANDS_SYSTEM[[string]$request.command]
+        if (-not $target) { throw 'comando_desconhecido' }
+        Start-Process $target
+        $r = @{ ok = $true }
+      }
       default { throw 'acao_desconhecida' }
     }
     $r.id = $request.id
@@ -523,6 +652,42 @@ export const stopTray = (d: Record<string, unknown>) => {
   if (d.confirmacao !== "CONFIRMADO") throw new Error("confirmacao_invalida");
   return request({ acao: "encerrarDaBandeja", caminho: pathApp(d.caminho) });
 };
+
+export const COMMANDS_SYSTEM = ["rede", "wifi", "bluetooth", "som", "tela", "configuracoes", "atualizacoes", "tarefas", "adaptadores", "terminal", "arquivos", "painel"] as const;
+const LIMIT_ICONS = 12;
+
+export function idApp(value: unknown): string {
+  if (typeof value !== "string" || !value || value.length > 500 || /[\u0000-\u001f]/.test(value)) throw new Error("valor_invalido");
+  return value;
+}
+
+export const listApps = (d: Record<string, unknown>) => request({ acao: "apps", forcar: d.forcar === true }, 40000);
+export const iconsApps = (d: Record<string, unknown>) => {
+  const ids = Array.isArray(d.ids) ? d.ids.slice(0, LIMIT_ICONS).map(idApp) : [];
+  if (ids.length === 0) throw new Error("valor_invalido");
+  return request({ acao: "iconesApps", ids }, 30000);
+};
+export const openApp = (d: Record<string, unknown>) => request({ acao: "abrirApp", id: idApp(d.id), admin: d.admin === true }, 30000);
+export const openCommandSystem = (d: Record<string, unknown>) => {
+  if (!COMMANDS_SYSTEM.includes(d.comando as (typeof COMMANDS_SYSTEM)[number])) throw new Error("valor_invalido");
+  return request({ acao: "comandoDoSistema", comando: d.comando });
+};
+
+function port(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error("valor_invalido");
+  return n;
+}
+
+export async function ownerConnection(portLocal: number, portRemota: number): Promise<number> {
+  const r = (await request({ acao: "donoDaConexao", portaLocal: port(portLocal), portaRemota: port(portRemota) }, 5000)) as { pid?: unknown };
+  return Number.isInteger(r.pid) && (r.pid as number) > 0 ? (r.pid as number) : 0;
+}
+
+export function focusWindowProcess(processId: number) {
+  if (!Number.isInteger(processId) || processId <= 4) throw new Error("valor_invalido");
+  return request({ acao: "focarProcesso", pid: processId }, 10000);
+}
 
 export function stopControl() {
   control.stop();

@@ -1,6 +1,7 @@
 import { AnimatePresence } from "motion/react";
 import { Island } from "../island/Island";
 import { Dock } from "../dock/Dock";
+import { AssistiveTouch } from "../assistive/AssistiveTouch";
 import { SystemWindow } from "../system/SystemWindow";
 import { ConnectionWindow } from "../../features/connections/ConnectionWindow";
 import { GlobalSearch } from "../../features/search/GlobalSearch";
@@ -31,6 +32,7 @@ export function Desktop() {
       </AnimatePresence>
       <Island />
       <Dock />
+      <AssistiveTouch />
       <GlobalSearch />
       <QuickCapture />
       {!first && <FirstRun />}

@@ -16,6 +16,16 @@ globalThis.localStorage ??= { getItem: (k) => memoryLocal.get(k) ?? null, setIte
 
 const vite = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false, watch: null }, appType: "custom", optimizeDeps: { noDiscovery: true } });
 const claude = await vite.ssrLoadModule("/server/claude.ts");
+const processesSeen = [];
+const focused = [];
+claude.searchProcess.dono = async (portClient) => {
+  processesSeen.push(portClient);
+  return 4242;
+};
+claude.searchProcess.focar = async (pid) => {
+  focused.push(pid);
+  return { ok: true };
+};
 const { useClaudeCode } = await vite.ssrLoadModule("/src/state/claudeCode.ts");
 const directoryClaude = join(rootTemporary, ".claude");
 const settings = join(directoryClaude, "settings.json");
@@ -52,7 +62,7 @@ test("Installs hooks when settings.json does not exist", () => {
     assert.equal(hook.type, "http");
     assert.equal(hook.url, "http://127.0.0.1:47999/ponte/claude/evento");
     assert.equal(hook.headers["x-niko-gancho"], secret());
-    assert.equal(hook.timeout, eventValue === "PermissionRequest" ? 120 : 5);
+    assert.equal(hook.timeout, eventValue === "PermissionRequest" ? 120 : 2);
   }
   assert.equal(claude.stateInstallation().instalado, true);
 });
@@ -71,6 +81,24 @@ test("Preserves existing settings, creates a backup and avoids duplicates on rei
   assert.equal(payload.hooks.Stop[0].hooks[0].command, "echo fim");
   assert.equal(payload.hooks.PreToolUse[0].matcher, "Bash");
   assert.equal(payload.hooks.PreToolUse.filter((g) => g.hooks.some((h) => h.type === "http")).length, 1);
+});
+
+test("Installs the status line with hooks and restores the previous one on removal", () => {
+  const beforeValue = readSettings();
+  writeFileSync(settings, JSON.stringify({ ...beforeValue, statusLine: { type: "command", command: "minha-status.sh", padding: 2 } }, null, 2));
+  claude.installHooks({ confirmacao: "INSTALAR" });
+  claude.installHooks({ confirmacao: "INSTALAR" });
+  const installed = readSettings();
+  assert.match(installed.statusLine.command, /status-claude-niko\.mjs/);
+  assert.equal(installed.statusLine.padding, 2);
+  assert.equal(claude.stateInstallation().desatualizado, false);
+  claude.removeHooks({ confirmacao: "REMOVER" });
+  assert.deepEqual(readSettings().statusLine, { type: "command", command: "minha-status.sh", padding: 2 });
+  writeFileSync(settings, JSON.stringify(beforeValue, null, 2));
+  claude.installHooks({ confirmacao: "INSTALAR" });
+  claude.removeHooks({ confirmacao: "REMOVER" });
+  assert.equal(readSettings().statusLine, undefined);
+  claude.installHooks({ confirmacao: "INSTALAR" });
 });
 
 test("Removal only deletes Niko entries", () => {
@@ -233,6 +261,93 @@ test("Always allow only accepts the rule suggested by Claude Code", async () => 
     hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedPermissions: [{ type: "allow", toolName: "Bash", ruleContent: "npm *", behavior: "allow", mode: "local", directories: [] }] } },
   });
   control.abort();
+});
+
+test("Claude questions accept only the offered options through the island", async () => {
+  const control = new AbortController();
+  const flow = await fetch(`${base}/ponte/claude/eventos`, { signal: control.signal });
+  const reader = flow.body.getReader();
+  let buffer = "";
+  const input = {
+    questions: [
+      { question: "Qual banco?", header: "Banco", multiSelect: false, options: [{ label: "SQLite", description: "Local" }, { label: "Postgres", description: "Servidor" }] },
+      { question: "Quais testes?", header: "Testes", multiSelect: true, options: [{ label: "Unidade" }, { label: "Integração" }] },
+    ],
+  };
+  const response = send({ hook_event_name: "PermissionRequest", session_id: "s7", tool_name: "AskUserQuestion", tool_input: input }, { "x-niko-gancho": secret() });
+  let request;
+  while (!request) {
+    buffer += new TextDecoder().decode((await reader.read()).value);
+    request = buffer.split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.sessao === "s7" && e.pedidoId);
+  }
+  const id = request.pedidoId;
+  assert.throws(() => claude.decideRequest({ pedidoId: id, decisao: "allow" }), /respostas_invalidas/);
+  assert.throws(() => claude.decideRequest({ pedidoId: id, decisao: "allow", respostas: [[5], [0]] }), /respostas_invalidas/);
+  assert.throws(() => claude.decideRequest({ pedidoId: id, decisao: "allow", respostas: [[0, 1], [0]] }), /respostas_invalidas/);
+  assert.throws(() => claude.decideRequest({ pedidoId: id, decisao: "allow", respostas: [[0]] }), /respostas_invalidas/);
+  assert.throws(() => claude.decideRequest({ pedidoId: id, decisao: "allow", respostas: [[0], [0, 0]] }), /respostas_invalidas/);
+  assert.throws(() => claude.decideRequest({ pedidoId: id, decisao: "allow", respostas: [[0], [1.5]] }), /respostas_invalidas/);
+  assert.throws(() => claude.decideRequest({ pedidoId: id, decisao: "deny", respostas: [[0], [0]] }), /decisao_invalida/);
+  claude.decideRequest({ pedidoId: id, decisao: "allow", respostas: [[1], [0, 1]] });
+  assert.deepEqual(await (await response).json(), {
+    hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedInput: { ...input, answers: { "Qual banco?": "Postgres", "Quais testes?": "Unidade,Integração" } } } },
+  });
+  control.abort();
+});
+
+test("Answers are accepted only for question requests", async () => {
+  const control = new AbortController();
+  const flow = await fetch(`${base}/ponte/claude/eventos`, { signal: control.signal });
+  const reader = flow.body.getReader();
+  let buffer = "";
+  const response = send({ hook_event_name: "PermissionRequest", session_id: "s8", tool_name: "Bash", tool_input: { command: "ls" } }, { "x-niko-gancho": secret() });
+  let request;
+  while (!request) {
+    buffer += new TextDecoder().decode((await reader.read()).value);
+    request = buffer.split("\n").filter(Boolean).map((l) => JSON.parse(l)).find((e) => e.sessao === "s8" && e.pedidoId);
+  }
+  assert.throws(() => claude.decideRequest({ pedidoId: request.pedidoId, decisao: "allow", respostas: [[0]] }), /respostas_invalidas/);
+  claude.decideRequest({ pedidoId: request.pedidoId, decisao: "terminal" });
+  await response;
+  control.abort();
+});
+
+test("Options with commas in their labels do not produce ambiguous answers", () => {
+  const perguntas = [{ question: "Q", multiSelect: true, rotulos: ["Sim, agora", "Não"] }];
+  assert.throws(() => claude.responsesValid(perguntas, [[0, 1]]), /respostas_invalidas/);
+  assert.deepEqual(claude.responsesValid(perguntas, [[0]]), { Q: "Sim, agora" });
+});
+
+test("The island reads AskUserQuestion prompts", async () => {
+  const { perguntasInput } = await vite.ssrLoadModule("/src/state/claudeCode.ts");
+  assert.deepEqual(perguntasInput("AskUserQuestion", { questions: [{ question: "Qual?", header: "H", multiSelect: true, options: [{ label: "A", description: "d" }, { label: "" }] }] }), [{ pergunta: "Qual?", titulo: "H", varias: true, opcoes: [{ rotulo: "A", descricao: "d" }] }]);
+  assert.equal(perguntasInput("Bash", { questions: [] }), undefined);
+  assert.equal(perguntasInput("AskUserQuestion", { questions: [{ question: "Sem opções", options: [] }] }), undefined);
+});
+
+test("Records each session process once and brings its terminal forward", async () => {
+  const beforeValue = processesSeen.length;
+  await send({ hook_event_name: "SessionStart", session_id: "terminal-1", cwd: "C:\\p" }, { "x-niko-gancho": secret() });
+  await send({ hook_event_name: "UserPromptSubmit", session_id: "terminal-1", cwd: "C:\\p" }, { "x-niko-gancho": secret() });
+  assert.equal(processesSeen.length, beforeValue + 1);
+  assert.deepEqual(await claude.trazerTerminal({ sessao: "terminal-1" }), { ok: true });
+  assert.equal(focused.at(-1), 4242);
+  await assert.rejects(claude.trazerTerminal({ sessao: "nunca-vista" }), /sem_processo/);
+});
+
+test("Opening a diff file requires an existing file inside the project", () => {
+  const directory = mkdtempSync(join(tmpdir(), "niko-arquivo-"));
+  try {
+    mkdirSync(join(directory, "src"));
+    writeFileSync(join(directory, "src", "a.ts"), "x");
+    assert.equal(claude.fileProject(directory, join(directory, "src", "a.ts")), join(directory, "src", "a.ts"));
+    assert.equal(claude.fileProject(directory, join("src", "a.ts")), join(directory, "src", "a.ts"));
+    for (const invalidValue of [join(directory, "src", "nao.ts"), join(directory, "src"), join(directory, "..", "fora.ts"), "C:\\Windows\\win.ini", "", 5, "a\nb"]) {
+      assert.throws(() => claude.fileProject(directory, invalidValue), /arquivo_invalido/, String(invalidValue));
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("Opening a project rejects directories not received from a session", () => {

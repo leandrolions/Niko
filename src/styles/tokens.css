@@ -37,7 +37,7 @@
   --escala: 1;
 }
 
-/* Island, bar and dock have their own backgrounds; tokens follow that background rather than the app theme. */
+/* Ilha, barra e dock têm fundo próprio: os tokens seguem o fundo escolhido, não o tema do app. */
 [data-tema="claro"],
 [data-fundo-claro] {
   color-scheme: light;

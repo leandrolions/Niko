@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, existsSync, type Dirent } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
+import { usageFromStatus } from "./claudeStatus";
 
 export interface WindowUsage {
   id: string;
@@ -66,8 +67,11 @@ function percentage(v: unknown): number | null {
   return Math.max(0, Math.min(100, n));
 }
 
-async function readClaude(): Promise<UsageTool> {
+async function readClaude(onlyOfficial: boolean): Promise<UsageTool> {
   const base: UsageTool = { id: "claude", nome: "Claude Code", situacao: "ausente", janelas: [] };
+  const pelaStatus = usageFromStatus();
+  if (pelaStatus) return { ...base, situacao: "ok", nota: "status_line", janelas: pelaStatus.map((j) => ({ id: j.id, rotulo: j.id, usado: j.usado, reiniciaEm: j.reiniciaEm })) };
+  if (onlyOfficial) return base;
   const profiles = profilesClaude();
   if (profiles.length === 0) return base;
   for (const profile of profiles) {
@@ -213,6 +217,12 @@ async function readSessionCurrent(): Promise<SessionCurrent | null> {
   return session;
 }
 
+export function usageOfficial(): Usage {
+  const claude = usageFromStatus();
+  const tools: UsageTool[] = claude ? [{ id: "claude", nome: "Claude Code", situacao: "ok", nota: "status_line", janelas: claude.map((j) => ({ id: j.id, rotulo: j.id, usado: j.usado, reiniciaEm: j.reiniciaEm })) }] : [];
+  return { atualizadoEm: new Date().toISOString(), ferramentas: tools, sessao: null };
+}
+
 let readAtProgress: Promise<Usage> | null = null;
 
 export function readUsage(force = false): Promise<Usage> {
@@ -226,7 +236,7 @@ export function readUsage(force = false): Promise<Usage> {
 }
 
 async function calculateUsage(): Promise<Usage> {
-  const [claude, codex] = await Promise.all([readClaude(), readCodex()]);
+  const [claude, codex] = await Promise.all([readClaude(false), readCodex()]);
   let session: SessionCurrent | null = null;
   try {
     session = await readSessionCurrent();

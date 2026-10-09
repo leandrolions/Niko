@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  HEADER_SECRET, stateInstallation, installHooks, readBodyJson, port, processEvent, removeHooks, secret, secretMatches, type CodingTool,
+  HEADER_SECRET, stateInstallation, installHooks, remindProcess, readBodyJson, port, processEvent, removeHooks, secret, secretMatches, type CodingTool,
 } from "./claude";
 
 const PREFIX_ROUTE = "/ponte/agentes/evento/";
@@ -11,11 +11,14 @@ const TIME_REQUEST_S = 115;
 const TIME_HOOK_DECISION_S = 120;
 const TIME_HOOK_QUICK_S = 10;
 const TIME_HOOK_FINAL_S = 3;
+const TIME_TO_CONNECT_S = 1;
+const TIME_CURL_QUICK_S = 3;
 const START_BLOCK_TOML = "# niko:inicio (gerado pelo Niko, remova pelo Niko)";
 const END_BLOCK_TOML = "# niko:fim";
 
-export const TOOLS_CODE: CodingTool[] = ["claude", "codex", "copilot", "opencode", "antigravity", "kimi"];
-const TOOLS_WITH_RESPONSE_JSON = new Set<CodingTool>(["copilot", "antigravity"]);
+export const TOOLS_CODE: CodingTool[] = ["claude", "codex", "copilot", "opencode", "antigravity", "kimi", "gemini", "amp"];
+const TOOLS_WITH_RESPONSE_JSON = new Set<CodingTool>(["copilot", "antigravity", "gemini"]);
+const MS_PER_SECOND = 1000;
 
 type BodyType = Record<string, unknown>;
 
@@ -36,8 +39,8 @@ function urlEvent(tool: CodingTool, eventValue: string) {
 }
 
 export function commandHook(tool: CodingTool, eventValue: string, key: string, decide = false) {
-  const time = decide ? TIME_REQUEST_S : TIME_HOOK_QUICK_S - 2;
-  return `curl.exe -s -m ${time} -X POST -H "content-type: application/json" -H "${HEADER_SECRET}: ${key}" --data-binary "@-" "${urlEvent(tool, eventValue)}"`;
+  const time = decide ? TIME_REQUEST_S : TIME_CURL_QUICK_S;
+  return `curl.exe -s --connect-timeout ${TIME_TO_CONNECT_S} -m ${time} -X POST -H "content-type: application/json" -H "${HEADER_SECRET}: ${key}" --data-binary "@-" "${urlEvent(tool, eventValue)}"`;
 }
 
 const EVENTS_COPILOT: Record<string, string> = {
@@ -58,6 +61,17 @@ const EVENTS_CODEX = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreTool
 const EVENTS_KIMI = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Notification", "Stop", "Interrupt"];
 const EVENTS_ANTIGRAVITY = ["PreInvocation", "PreToolUse", "Stop"];
 
+const EVENTS_GEMINI: Record<string, string> = {
+  SessionStart: "SessionStart",
+  SessionEnd: "SessionEnd",
+  BeforeAgent: "UserPromptSubmit",
+  AfterAgent: "Stop",
+  BeforeTool: "PreToolUse",
+  Notification: "Notification",
+};
+
+const TOOLS_GEMINI: Record<string, string> = { replace: "Edit", write_file: "Write", run_shell_command: "Bash", read_file: "Read", glob: "Glob", search_file_content: "Grep", web_fetch: "WebFetch", google_web_search: "WebSearch" };
+
 function typeNotice(type: string): string {
   return /permission|approv|input|idle|elicitation/i.test(type) ? "agent_needs_input" : type;
 }
@@ -73,7 +87,7 @@ function args(v: unknown): BodyType {
   return object(v);
 }
 
-/** Convert each tool event to the Claude Code hook format understood by the island. */
+/** Convert each tool event to the Claude Code hook format used by the island. */
 export function normalizeEvent(tool: CodingTool, eventRoute: string, body: BodyType): BodyType | null {
   if (tool === "copilot") {
     const nameValue = EVENTS_COPILOT[eventRoute];
@@ -110,7 +124,20 @@ export function normalizeEvent(tool: CodingTool, eventRoute: string, body: BodyT
     }
     return null;
   }
-  if (tool === "opencode") return text(body.hook_event_name) ? body : null;
+  if (tool === "gemini") {
+    const nameValue = EVENTS_GEMINI[text(body.hook_event_name) || eventRoute];
+    if (!nameValue) return null;
+    const base = { hook_event_name: nameValue, session_id: text(body.session_id), cwd: text(body.cwd) };
+    if (nameValue === "UserPromptSubmit") return { ...base, prompt: text(body.prompt) };
+    if (nameValue === "Stop") return { ...base, last_assistant_message: text(body.prompt_response) };
+    if (nameValue === "PreToolUse") {
+      const original = text(body.tool_name);
+      return { ...base, tool_name: TOOLS_GEMINI[original] ?? original, tool_input: args(body.tool_input) };
+    }
+    if (nameValue === "Notification") return { ...base, notification_type: text(body.notification_type) === "ToolPermission" ? "agent_needs_input" : text(body.notification_type), message: text(body.message) };
+    return base;
+  }
+  if (tool === "opencode" || tool === "amp") return text(body.hook_event_name) ? body : null;
   return null;
 }
 
@@ -148,6 +175,7 @@ export async function receiveEventAgent(req: IncomingMessage, res: ServerRespons
   }
   const normalized = normalizeEvent(tool, url.searchParams.get("evento") ?? "", body);
   if (!normalized) return empty(res);
+  await remindProcess(req, normalized);
   processEvent(normalized, tool, res, empty);
 }
 
@@ -242,6 +270,28 @@ const INSTALLERS: Record<Exclude<CodingTool, "claude">, Installer> = {
       return `${JSON.stringify(payload, null, 2)}\n`;
     },
   },
+  gemini: {
+    arquivo: () => home(".gemini", "settings.json"),
+    detectado: () => existsSync(home(".gemini", "settings.json")) || existsSync(home(".gemini", "oauth_creds.json")),
+    propor: (current, key) => {
+      const payload = readJson(current);
+      const hooks = withoutGroupsNiko(object(payload.hooks), "gemini");
+      for (const eventValue of Object.keys(EVENTS_GEMINI)) {
+        const groups = Array.isArray(hooks[eventValue]) ? (hooks[eventValue] as unknown[]) : [];
+        const seconds = eventValue === "SessionEnd" ? TIME_HOOK_FINAL_S : TIME_HOOK_QUICK_S;
+        const hookNiko = { name: "niko", type: "command", command: commandHook("gemini", eventValue, key), timeout: seconds * MS_PER_SECOND };
+        hooks[eventValue] = [...groups, { ...(eventValue === "BeforeTool" ? { matcher: "*" } : {}), hooks: [hookNiko] }];
+      }
+      return `${JSON.stringify({ ...payload, hooks }, null, 2)}\n`;
+    },
+    retirar: (current) => {
+      const payload = readJson(current);
+      const hooks = withoutGroupsNiko(object(payload.hooks), "gemini");
+      const rest = { ...payload, hooks };
+      if (Object.keys(hooks).length === 0) delete (rest as BodyType).hooks;
+      return `${JSON.stringify(rest, null, 2)}\n`;
+    },
+  },
   kimi: {
     arquivo: () => home(".kimi-code", "config.toml"),
     detectado: () => existsSync(home(".kimi-code")),
@@ -255,6 +305,12 @@ const INSTALLERS: Record<Exclude<CodingTool, "claude">, Installer> = {
       return `${base ? `${base}\n\n` : ""}${START_BLOCK_TOML}\n${inputs.join("\n\n")}\n${END_BLOCK_TOML}\n`;
     },
     retirar: (current) => `${withoutBlockToml(current).replace(/\s*$/, "")}\n`,
+  },
+  amp: {
+    arquivo: () => home(".config", "amp", "plugins", "niko.ts"),
+    detectado: () => existsSync(home(".config", "amp")),
+    propor: (_current, key) => pluginAmp(key),
+    retirar: () => null,
   },
   opencode: {
     arquivo: () => home(".config", "opencode", "plugins", "niko.js"),
@@ -317,6 +373,33 @@ export const NikoPlugin = async ({ directory }) => ({
 `;
 }
 
+export function pluginAmp(key: string) {
+  const url = `http://127.0.0.1:${port()}${PREFIX_ROUTE}amp`;
+  return `// Gerado pelo Niko: manda os eventos do Amp para a ilha, só para acompanhar. Remova pelo Niko.
+const URL_DO_NIKO = ${JSON.stringify(url)};
+const CHAVE = ${JSON.stringify(key)};
+
+function enviar(corpo) {
+  fetch(URL_DO_NIKO, {
+    method: "POST",
+    headers: { "content-type": "application/json", ${JSON.stringify(HEADER_SECRET)}: CHAVE },
+    body: JSON.stringify({ cwd: process.cwd(), ...corpo }),
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => {});
+}
+
+export default function (amp) {
+  amp.on("session.start", (e) => enviar({ session_id: e.thread?.id ?? "", hook_event_name: "SessionStart" }));
+  amp.on("agent.start", (e) => enviar({ session_id: e.thread?.id ?? "", hook_event_name: "UserPromptSubmit", prompt: String(e.message ?? "").slice(0, 2000) }));
+  amp.on("agent.end", (e) => enviar({ session_id: e.thread?.id ?? "", hook_event_name: e.status === "error" ? "StopFailure" : "Stop" }));
+  amp.on("tool.call", (e) => {
+    enviar({ session_id: e.thread?.id ?? "", hook_event_name: "PreToolUse", tool_name: e.tool, tool_input: e.input ?? {} });
+    return { action: "allow" };
+  });
+}
+`;
+}
+
 function readText(path: string): string | null {
   return existsSync(path) ? readFileSync(path, "utf8") : null;
 }
@@ -356,7 +439,8 @@ function state(id: CodingTool): StateTool {
   const path = installer.arquivo();
   const content = readText(path) ?? "";
   const hasNiko = content.includes(`${PREFIX_ROUTE}${id}`);
-  const current = hasNiko && content.includes(secret()) && content.includes(`127.0.0.1:${port()}`);
+  const usaCurl = !["opencode", "amp"].includes(id);
+  const current = hasNiko && content.includes(secret()) && content.includes(`127.0.0.1:${port()}`) && (!usaCurl || content.includes("--connect-timeout"));
   let invalid = false;
   if (content && path.endsWith(".json")) {
     try {

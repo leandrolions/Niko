@@ -20,7 +20,7 @@ document.documentElement.dataset.tema = "claro";
 const SELECTOR_OVERLAYS = ".ilha-raiz, .ilha-gatilho, .ilha-barra, .ilha-pop, .dock, .dock-gatilho, .dock-previa";
 
 async function start() {
-  const overlay = WINDOW === "ilha" || WINDOW === "dock";
+  const overlay = WINDOW === "ilha" || WINDOW === "dock" || WINDOW === "assistive";
   if (overlay) document.documentElement.classList.add("janela-sobreposta");
   document.addEventListener("contextmenu", (e) => {
     const target = e.target as HTMLElement | null;
@@ -42,12 +42,12 @@ async function start() {
     root.innerHTML = `<div class="falha-ponte"><h1>${T.app.ponteFalhou}</h1><p>${T.app.ponteFalhouDica}</p></div>`;
     return;
   }
-  if (WINDOW === "ilha" || WINDOW === "dock") document.documentElement.classList.add("janela-sobreposta");
+  if (overlay) document.documentElement.classList.add("janela-sobreposta");
   let Root: () => React.ReactElement;
   if (!NATIVE) Root = (await import("./windows/desktop/Desktop")).Desktop;
   else {
     const apps = await import("./desktop/Applications");
-    Root = WINDOW === "ilha" ? apps.AppIsland : WINDOW === "dock" ? apps.AppDock : apps.AppSystem;
+    Root = WINDOW === "ilha" ? apps.AppIsland : WINDOW === "dock" ? apps.AppDock : WINDOW === "assistive" ? apps.AppAssistive : apps.AppSystem;
   }
   createRoot(root).render(
     <StrictMode>

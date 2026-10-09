@@ -11,6 +11,7 @@ import { BACKGROUND_ACCENT, hexValid, mix, textSobre } from "../../../utils/colo
 import { T } from "../../../i18n/ptBR";
 import { useMonitors } from "../../../desktop/desktop";
 import { ALL_THE_MONITORS } from "../../dock/monitors";
+import { SEARCHENGINES, type SearchEngine } from "../../../utils/appSearch";
 
 const MONITOR_PRIMARY = "principal";
 
@@ -88,6 +89,18 @@ export function Personalization({ topo: topValue, aoFechar: onClose }: { topo: n
         { valor: "secundario", rotulo: P.monitores.secundario },
       ];
 
+  const monitorPrimary = monitors.find((m) => m.principal);
+  const monitorIsland = multipleMonitors && monitors.some((m) => m.nome === cfg.ilha.monitor && !m.principal) ? cfg.ilha.monitor : MONITOR_PRIMARY;
+  const optionsIsland = multipleMonitors
+    ? [
+        { valor: MONITOR_PRIMARY, rotulo: monitors.length === 2 ? P.monitores.principal : P.monitores.numero(monitorPrimary?.numero ?? 1, true) },
+        ...monitors.filter((m) => !m.principal).map((m) => ({ valor: m.nome, rotulo: monitors.length === 2 ? P.monitores.secundario : P.monitores.numero(m.numero, false) })),
+      ]
+    : [
+        { valor: MONITOR_PRIMARY, rotulo: P.monitores.principal },
+        { valor: "secundario", rotulo: P.monitores.secundario },
+      ];
+
   const applyColor = (change: { fundo?: string; opacidade?: number }) => {
     cfg.setIsland(change);
     cfg.set({ dock: { ...useConfig.getState().dock, ...change } });
@@ -147,6 +160,9 @@ export function Personalization({ topo: topValue, aoFechar: onClose }: { topo: n
         <Line rotulo={P.tamanhoDaIlha}>
           <SelectionValue rotulo={P.tamanhoDaIlha} valor={cfg.ilha.tamanho} aoMudar={(size) => cfg.setIsland({ tamanho: size })} opcoes={(["pequena", "media", "grande"] as const).map((t) => ({ valor: t, rotulo: T.configuracoes.tamanhos[t] }))} />
         </Line>
+        <Line rotulo={P.monitorDaIlha}>
+          <SelectionValue desativada={!multipleMonitors} rotulo={P.monitorDaIlha} valor={monitorIsland} aoMudar={(monitor) => cfg.setIsland({ monitor: monitor === MONITOR_PRIMARY ? "" : monitor })} opcoes={optionsIsland} />
+        </Line>
         <Line rotulo={P.repouso}>
           <SelectionValue<RestIsland> grade rotulo={P.repouso} valor={cfg.ilha.repouso} aoMudar={(rest) => cfg.setIsland({ repouso: rest })} opcoes={(Object.keys(T.configuracoes.repousos) as RestIsland[]).map((r) => ({ valor: r, rotulo: T.configuracoes.repousos[r] }))} />
         </Line>
@@ -177,6 +193,9 @@ export function Personalization({ topo: topValue, aoFechar: onClose }: { topo: n
               {P.monitores.naoReconhecido}
             </span>
           )}
+        </Line>
+        <Line rotulo={P.buscador}>
+          <SelectionValue<SearchEngine> rotulo={P.buscador} valor={cfg.dock.buscador} aoMudar={(searchEngine) => cfg.set({ dock: { ...useConfig.getState().dock, buscador: searchEngine } })} opcoes={SEARCHENGINES.map((b) => ({ valor: b, rotulo: P.buscadores[b] }))} />
         </Line>
       </Group>
       <div className="ilha-personalizar-rodape">

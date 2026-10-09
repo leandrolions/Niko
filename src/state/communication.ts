@@ -58,6 +58,7 @@ interface StateCommunication extends DataCommunication {
   forget: (id: string) => void;
   updateConnection: (id: ServiceId, partial: Partial<Connection>) => void;
   registerEventConnection: (eventValue: Omit<EventConnection, "id" | "data">) => void;
+  markFailuresViews: (id: ServiceId) => void;
   setUsageAi: (usage: UsageAi[]) => void;
   replace: (payload: Partial<DataCommunication>) => void;
 }
@@ -113,6 +114,7 @@ export const useCommunication = create<StateCommunication>()(
         set((s) => ({ memoria: [...s.memoria, { id: generateId(), texto: text.trim().slice(0, 300), agenteId: agentId, origem: originValue, data: new Date().toISOString() }] })),
       forget: (id) => set((s) => ({ memoria: s.memoria.filter((m) => m.id !== id) })),
       updateConnection: (id, partial) => set((s) => ({ conexoes: s.conexoes.map((c) => (c.id === id ? { ...c, ...partial } : c)) })),
+      markFailuresViews: (id) => set((s) => ({ conexoes: s.conexoes.map((c) => (c.id === id ? { ...c, falhasVistasEm: new Date().toISOString() } : c)) })),
       registerEventConnection: (eventValue) =>
         set((s) => ({ eventosConexao: [{ ...eventValue, id: generateId(), data: new Date().toISOString() }, ...s.eventosConexao].slice(0, 200) })),
       setUsageAi: (usageAi) => set({ usoIa: usageAi }),
@@ -129,3 +131,8 @@ export const useCommunication = create<StateCommunication>()(
     },
   ),
 );
+
+export function failuresNotViews(connection: Connection, events: EventConnection[]): number {
+  const since = connection.falhasVistasEm ? Date.parse(connection.falhasVistasEm) : 0;
+  return events.filter((e) => e.servico === connection.id && e.tipo === "falha" && Date.parse(e.data) > since).length;
+}

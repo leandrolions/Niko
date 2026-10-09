@@ -5,6 +5,10 @@ import { useConfig, type CategoryNotice, type SectionToday, type ViewIsland } fr
 
 export type IslandMode = "escondida" | "compacta" | "expandida";
 
+export function stateWithNotice(state: IslandMode, hasNotice: boolean): IslandMode {
+  return hasNotice && state === "escondida" ? "compacta" : state;
+}
+
 export interface Reveal {
   texto: string;
   tipo: "sucesso" | "info" | "alerta";
@@ -38,7 +42,7 @@ interface IslandState {
   greet: (versionNew?: string) => void;
   stopGreeting: () => void;
   collapse: () => void;
-  revelar: (r: Reveal, ms?: number, importance?: "alta" | "normal") => void;
+  revelar: (r: Reveal, ms?: number, importance?: "alta" | "normal") => boolean;
   dismissReveal: () => void;
   notifyFailure: (text: string) => void;
   play: () => void;
@@ -76,21 +80,22 @@ export const useIsland = create<IslandState>()((set, get) => {
     revelar: (r, ms = 4500, importance = "alta") => {
       const { ilha: island, naoPerturbe: notDisturb } = useConfig.getState();
       const preference = island.notificacoes;
-      if (preference === "nenhuma") return;
-      if (notDisturb && r.aba !== "foco") return;
-      if (!noticeEnabled(r.categoria ?? (r.aba ? CATEGORY_TAB[r.aba] : undefined))) return;
+      if (preference === "nenhuma") return false;
+      if (notDisturb && r.aba !== "foco") return false;
+      if (!noticeEnabled(r.categoria ?? (r.aba ? CATEGORY_TAB[r.aba] : undefined))) return false;
       if (importance === "normal") {
-        if (preference !== "todas") return;
-        if (Date.now() - lastNormal < INTERVAL_NORMAL) return;
+        if (preference !== "todas") return false;
+        if (Date.now() - lastNormal < INTERVAL_NORMAL) return false;
         lastNormal = Date.now();
       }
-      if (get().estado === "expandida") return;
       const pending = { r, ms };
       if (get().revelacao) {
-        if (queue.length < 3 && !queue.some((f) => f.r.texto === r.texto)) queue.push(pending);
-        return;
+        if (queue.length >= 3 || queue.some((f) => f.r.texto === r.texto)) return false;
+        queue.push(pending);
+        return true;
       }
       show(pending);
+      return true;
     },
     dismissReveal: () => {
       window.clearTimeout(timer);

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
-  Plus, Music, Timer, CalendarDays, MessageCircle, Plug, Bell, Volume2, VolumeX, AppWindow, ChevronUp, Check, CircleAlert, Download, CodeXml, ShieldAlert, LoaderCircle,
+  Plus, Music, Timer, CalendarDays, MessageCircle, Plug, Bell, Volume2, VolumeX, AppWindow, ChevronUp, Pin, PinOff, Check, CircleAlert, Download, CodeXml, ShieldAlert, LoaderCircle,
   type LucideIcon,
 } from "lucide-react";
 import { useConfig, type TabIsland, type SectionToday, type ViewIsland } from "../../state/settings";
-import { useIsland } from "../../state/island";
+import { stateWithNotice, useIsland } from "../../state/island";
 import { useInterface } from "../../state/interface";
 import { useAgents, AGENTS, stateAgent, alertFresh } from "../../state/agents";
 import { usePomodoro, remainingCurrent, formatClock } from "../../state/pomodoro";
@@ -27,7 +27,7 @@ import { tabEnabled } from "../../utils/features";
 import { typesCaptureEnabled } from "../../utils/capture";
 import { useClaudeCode, sessionActive, nameModel } from "../../state/claudeCode";
 import { useUpdate } from "../../state/update";
-import { NATIVE, listenEvent, useAreaInteractive, useCursorOutside, useStateFront } from "../../desktop/desktop";
+import { NATIVE, releaseSystemInitial, listenShortcut, listenEvent, useAreaInteractive, useCursorOutside, useStateFront } from "../../desktop/desktop";
 import { Greeting } from "./animations/Greeting";
 import { useDailyGreeting } from "./animations/useDailyGreeting";
 import { HEIGHT_GREETING, EVENT_GREETING, WIDTH_GREETING } from "./animations/requestGreeting";
@@ -85,6 +85,7 @@ function stateCalm(e: AgentState): AgentState {
   return e === "alerta" || e === "erro" ? "ocioso" : e;
 }
 const WIDTH_EXPANDED = 660;
+const GREETING_VENCE_AT_MS = 15 * 60_000;
 const HEIGHT_COMPACT = 30;
 const HEIGHT_COMPACT_MEDIA = 34;
 const SIZE_COVER_COMPACT = 28;
@@ -121,6 +122,9 @@ export function Island() {
   const names = useConfig((s) => s.agentes.nomes);
   const roles = useConfig((s) => s.agentes.cargos);
   const privacy = useConfig((s) => s.privacidade);
+  const preferenceMovement = useReducedMotion();
+  const animacoesDisabled = useConfig((s) => s.reduzirAnimacoes);
+  const reduceAnimacoes = animacoesDisabled || preferenceMovement;
   const state = useIsland((s) => s.estado);
   const tab = useIsland((s) => s.aba);
   const sectionToday = useIsland((s) => s.secaoHoje);
@@ -196,6 +200,28 @@ export function Island() {
   const tabCurrent: ViewIsland = tab === "captura" && captureAvailable ? "captura" : tabs.includes(tab as TabIsland) ? tab : tabs[0] ?? "hoje";
   const tabBeforeCapture = useRef<TabIsland>("hoje");
   const scrollTabs = useRef({ acumulado: 0, ultimaTroca: 0 });
+  const [fixada, setFixada] = useState(false);
+  const toOShortcut = useRef({ abas: tabs, abaAtual: tabCurrent, estado: state });
+  toOShortcut.current = { abas: tabs, abaAtual: tabCurrent, estado: state };
+  useEffect(() => {
+    let alive = true;
+    let disable: () => void = () => undefined;
+    void listenShortcut((action) => {
+      if (action !== "proximaAba") return;
+      const { abas: list, abaAtual: current, estado: now } = toOShortcut.current;
+      if (list.length === 0) return;
+      const index = list.indexOf(current as TabIsland);
+      void playSound("blip");
+      openValue(now === "expandida" ? list[(index + 1) % list.length] : list[Math.max(0, index)]);
+    }).then((f) => {
+      if (alive) disable = f;
+      else f();
+    });
+    return () => {
+      alive = false;
+      disable();
+    };
+  }, [openValue]);
   const front = useStateFront(cfg.ativa);
   const [sidesFreeNative, setSidesFreeNative] = useState(true);
   useEffect(() => {
@@ -213,7 +239,7 @@ export function Island() {
   const working = AGENTS.filter((a) => ["pensando", "escrevendo"].includes(stateAgent(agents, a)));
 
   const requestPending = requestsClaude.length > 0;
-  const stateEffective = isGreeting ? "compacta" : covered && state !== "expandida" && !reveal && !requestPending ? "escondida" : (cfg.modo === "fixo" || requestPending) && state === "escondida" ? "compacta" : state;
+  const stateEffective = isGreeting ? "compacta" : covered && state !== "expandida" && !reveal && !requestPending ? "escondida" : (cfg.modo === "fixo" || requestPending) && state === "escondida" ? "compacta" : stateWithNotice(state, Boolean(reveal));
 
   useEffect(() => {
     if (cfg.modo !== "esconder" || stateEffective !== "compacta" || about || barAtUsage || reveal || fresh > 0 || pomodoro.rodando || update.fase !== "nada" || requestPending) return;
@@ -226,7 +252,11 @@ export function Island() {
   }, [state, tabCurrent, alerts.length]);
 
   useEffect(() => {
-    if (stateEffective !== "expandida" || about || cfg.fechamentoSeg === 0 || tabCurrent === "claude") {
+    if (stateEffective !== "expandida") setFixada(false);
+  }, [stateEffective]);
+
+  useEffect(() => {
+    if (stateEffective !== "expandida" || about || cfg.fechamentoSeg === 0 || tabCurrent === "claude" || fixada) {
       setRemainingClose(null);
       return;
     }
@@ -244,7 +274,7 @@ export function Island() {
       setRemainingClose(r);
     }, 100);
     return () => window.clearInterval(t);
-  }, [stateEffective, about, cfg.fechamentoSeg, collapse, tabCurrent]);
+  }, [stateEffective, about, cfg.fechamentoSeg, collapse, tabCurrent, fixada]);
 
   useEffect(() => {
     if (stateEffective !== "expandida") return;
@@ -255,7 +285,7 @@ export function Island() {
       }
     };
     const onClickOutside = (e: PointerEvent) => {
-      if (root.current && !root.current.contains(e.target as Node)) collapse();
+      if (!fixada && root.current && !root.current.contains(e.target as Node)) collapse();
     };
     window.addEventListener("keydown", onPress);
     window.addEventListener("pointerdown", onClickOutside, true);
@@ -263,12 +293,21 @@ export function Island() {
       window.removeEventListener("keydown", onPress);
       window.removeEventListener("pointerdown", onClickOutside, true);
     };
-  }, [stateEffective, collapse]);
+  }, [stateEffective, collapse, fixada]);
 
   const claudeUnavailable = !cfg.ativa || !cfg.blocos.claude;
   useEffect(() => {
     if (claudeUnavailable && requestsClaude.length > 0) returnPendingOnTerminal();
   }, [claudeUnavailable, requestsClaude.length]);
+
+  useEffect(() => {
+    if (!greeting) return;
+    if (front.telaCheia) {
+      void releaseSystemInitial();
+      return;
+    }
+    if (Date.now() - greeting.id > GREETING_VENCE_AT_MS) stopGreeting();
+  }, [greeting, front.telaCheia, stopGreeting]);
 
   useEffect(() => {
     if (!front.telaCheia) return;
@@ -278,8 +317,8 @@ export function Island() {
   }, [front.telaCheia, collapse]);
 
   const compact = useMemo(() => {
+    if (reveal) return { tipo: "revelacao" as const, largura: 380 };
     if (update.fase !== "nada") return { tipo: "atualizacao" as const, largura: 350 };
-    if (reveal) return { tipo: "revelacao" as const, largura: 340 };
     if (requestsClaude.length > 0) return { tipo: "claudePedido" as const, largura: 340 };
     if (pomodoroStarted) return { tipo: "pomodoro" as const, largura: media.tocando ? 330 : 290 };
     if (cfg.blocos.midia && mediaActiveIsland(media)) return { tipo: "midia" as const, largura: 330 };
@@ -299,7 +338,7 @@ export function Island() {
     : stateEffective === "escondida"
       ? { w: 120, h: 6, r: 6 }
       : stateEffective === "compacta"
-        ? { w: compact.largura, h: compact.tipo === "midia" ? HEIGHT_COMPACT_MEDIA : HEIGHT_COMPACT, r: compact.tipo === "midia" ? 14 : 12 }
+        ? { w: compact.largura, h: compact.tipo === "revelacao" ? 56 : compact.tipo === "midia" ? HEIGHT_COMPACT_MEDIA : HEIGHT_COMPACT, r: compact.tipo === "midia" || compact.tipo === "revelacao" ? 14 : 12 }
         : { w: WIDTH_TAB[tabCurrent] ?? WIDTH_EXPANDED, h: heightView(tabCurrent, sectionToday), r: 30 };
   const growing = target.w * target.h >= previous.current.w * previous.current.h;
   previous.current = { w: target.w, h: target.h };
@@ -348,7 +387,7 @@ export function Island() {
             <div className="ilha-compacta-lado">
               {reveal?.marca ? <Brand marca={reveal.marca} tamanho={16} /> : reveal?.agente ? <SpaceCharacter agente={reveal.agente} tamanho={20} posicao="compacta" /> : null}
             </div>
-            <span className="ilha-compacta-texto privado">{reveal?.texto}</span>
+            <span className="ilha-compacta-texto privado" role="status">{reveal?.texto}</span>
             <div className="ilha-compacta-lado">
               {reveal?.tipo === "alerta" ? <CircleAlert size={15} color="#f5a524" /> : <Check size={15} color="#34d399" />}
             </div>
@@ -506,6 +545,14 @@ export function Island() {
           animate={{ width: target.w, height: target.h, borderBottomLeftRadius: target.r, borderBottomRightRadius: target.r }}
           transition={transition}
         >
+          <AnimatePresence>
+            {reveal && !isGreeting && <motion.div key={reveal.texto} className="ilha-sinal-aviso" aria-hidden="true" initial={{ opacity: 0 }} animate={{ opacity: reduceAnimacoes ? 0.45 : [0, 0.7, 0.25, 0.6, 0.25] }} exit={{ opacity: 0 }} transition={{ duration: reduceAnimacoes ? 0.12 : 1.2 }} />}
+          </AnimatePresence>
+          <AnimatePresence>
+            {reveal && stateEffective === "expandida" && !isGreeting && <motion.button key={reveal.texto} type="button" className="ilha-aviso-aberta" initial={{ opacity: 0, y: reduceAnimacoes ? 0 : -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} onClick={() => { openValue(reveal.aba); useIsland.getState().dismissReveal(); }}>
+              <Bell size={16} /><span className="privado" role="status">{reveal.texto}</span>
+            </motion.button>}
+          </AnimatePresence>
           <div className="ilha-recorte">
             <AnimatePresence mode="popLayout" initial={false}>
               {greeting && <Greeting key={`saudacao-${greeting.id}`} versaoNova={greeting.versaoNova} aoTerminar={stopGreeting} />}
@@ -640,6 +687,20 @@ export function Island() {
                         }}
                       >
                         <AppWindow size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ilha-acao"
+                        aria-label={fixada ? T.ilha.desafixar : T.ilha.fixar}
+                        data-dica={fixada ? T.ilha.desafixar : T.ilha.fixar}
+                        aria-pressed={fixada}
+                        data-ativa={fixada || undefined}
+                        onClick={() => {
+                          void playSound("blip");
+                          setFixada((f) => !f);
+                        }}
+                      >
+                        {fixada ? <PinOff size={14} /> : <Pin size={14} />}
                       </button>
                       <button type="button" className="ilha-acao" aria-label={T.ilha.fecharIlha} data-dica={T.ilha.fecharIlha} onClick={() => collapse()}>
                         <ChevronUp size={14} />

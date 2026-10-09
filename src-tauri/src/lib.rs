@@ -8,8 +8,9 @@ use serde::Deserialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 
+mod shortcuts;
 mod windows_taskbar;
 mod docks;
 mod legacy_commands;
@@ -18,7 +19,7 @@ mod thumbnails;
 
 const PORT: u16 = 47831;
 const ISLAND_HEIGHT: f64 = 720.0;
-const DOCK_HEIGHT: f64 = 250.0;
+const DOCK_HEIGHT: f64 = 400.0;
 
 #[derive(Deserialize, Clone, Copy)]
 struct Rectangle {
@@ -89,9 +90,19 @@ fn register_foreground(app: &AppHandle) {
     if front == 0 {
         return;
     }
-    let overlay = app.webview_windows().iter().any(|(r, j)| (r == "ilha" || docks::is_dock(r)) && j.hwnd().map(|h| h.0 as isize == front).unwrap_or(false));
+    let overlay = app.webview_windows().iter().any(|(r, j)| (r == "ilha" || r == "assistive" || docks::is_dock(r)) && j.hwnd().map(|h| h.0 as isize == front).unwrap_or(false));
     if !overlay {
         LAST_FOREGROUND.store(front, Ordering::Relaxed);
+    }
+}
+
+pub fn restore_focus() {
+    let previous = LAST_FOREGROUND.load(Ordering::Relaxed);
+    if previous != 0 {
+        let window = windows::Win32::Foundation::HWND(previous as *mut core::ffi::c_void);
+        unsafe {
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(window);
+        }
     }
 }
 
@@ -157,6 +168,25 @@ fn show(app: &AppHandle) {
     }
 }
 
+fn dock_under_cursor(app: &AppHandle) -> Option<WebviewWindow> {
+    let docks: Vec<(String, WebviewWindow)> = app.webview_windows().into_iter().filter(|(r, j)| docks::is_dock(r) && j.is_visible().unwrap_or(false)).collect();
+    let cursor = app.cursor_position().ok();
+    let under_o_cursor = cursor.and_then(|c| {
+        docks.iter().find(|(_, j)| {
+            let Ok(Some(m)) = j.current_monitor() else { return false };
+            let (p, t) = (m.position(), m.size());
+            c.x >= p.x as f64 && c.x < p.x as f64 + t.width as f64 && c.y >= p.y as f64 && c.y < p.y as f64 + t.height as f64
+        })
+    });
+    under_o_cursor.or_else(|| docks.iter().find(|(r, _)| r == "dock")).or(docks.first()).map(|(_, j)| j.clone())
+}
+
+fn open_app_search(app: &AppHandle) {
+    let Some(dock) = dock_under_cursor(app) else { return };
+    let _ = dock.set_focus();
+    let _ = dock.emit_to(dock.label(), "niko://lupa", ());
+}
+
 fn create_overlay(app: &AppHandle, label: &str, y: f64, x: f64, width: f64, height: f64) -> tauri::Result<WebviewWindow> {
     WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
         .title("Niko")
@@ -183,7 +213,7 @@ fn watch_cursor(app: AppHandle) {
                 Ok(a) => a.clone(),
                 Err(_) => continue,
             };
-            let overlays: Vec<(String, WebviewWindow)> = app.webview_windows().into_iter().filter(|(r, _)| r == "ilha" || docks::is_dock(r)).collect();
+            let overlays: Vec<(String, WebviewWindow)> = app.webview_windows().into_iter().filter(|(r, _)| r == "ilha" || r == "assistive" || docks::is_dock(r)).collect();
             outside.retain(|r, _| overlays.iter().any(|(s, _)| s == r));
             for (label, window) in &overlays {
                 let label = label.as_str();
@@ -231,11 +261,11 @@ fn start_bridge(app: &AppHandle, token: &str, restart: bool) {
         register("sem pasta de recursos".into());
         return;
     };
-    let resources = without_prefix(directory.join("resources"));
+    let resources = without_path_prefix(directory.join("resources"));
     let node = resources.join("node.exe");
     let script = resources.join("bridge.mjs");
     let output_error = payload.as_ref().and_then(|p| {
-        let path = without_prefix(p.join("ponte.log"));
+        let path = without_path_prefix(p.join("ponte.log"));
         if restart {
             std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
         } else {
@@ -255,7 +285,7 @@ fn start_bridge(app: &AppHandle, token: &str, restart: bool) {
     command.arg("bridge.mjs").env("NIKO_PORTA", PORT.to_string()).env("NIKO_TOKEN", token).env("NIKO_PAI", std::process::id().to_string());
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
+        use std::the::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
     match command.spawn() {
@@ -347,20 +377,33 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    if event.state() == ShortcutState::Pressed {
-                        show(app);
-                        let _ = app.emit_to("sistema", "niko://captura", ());
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let Some(action) = shortcuts::action_for(app, shortcut) else { return };
+                    match action.as_str() {
+                        "lupa" => open_app_search(app),
+                        "sistema" => toggle_system(app.clone()),
+                        "captura" => {
+                            show(app);
+                            let _ = app.emit_to("sistema", "niko://captura", ());
+                        }
+                        "pedido" | "proximaAba" | "terminal" => shortcuts::notify_window(app, "ilha", &action),
+                        _ => shortcuts::notify_window(app, "sistema", &action),
                     }
                 })
                 .build(),
         )
         .manage(AppState { areas: Mutex::new(HashMap::new()), token: token.clone(), bridge: Mutex::new(None) })
         .manage(thumbnails::Thumbnails::default())
+        .manage(shortcuts::Shortcuts::default())
         .invoke_handler(tauri::generate_handler![
+            legacy_commands::definir_atalhos,
             legacy_commands::reservar_dock,
             legacy_commands::barra_windows,
             legacy_commands::monitores,
             legacy_commands::definir_docks,
+            legacy_commands::definir_monitor_da_ilha,
             legacy_commands::frente_cobre_tela,
             legacy_commands::area_interativa,
             legacy_commands::token_ponte,
@@ -368,6 +411,7 @@ pub fn run() {
             legacy_commands::mostrar_sistema,
             legacy_commands::liberar_sistema_inicial,
             legacy_commands::tempo_ocioso_ms,
+            legacy_commands::devolver_foco,
             legacy_commands::alternar_sistema,
             legacy_commands::abrir_link,
             legacy_commands::sair,
@@ -425,7 +469,8 @@ pub fn run() {
 
             create_overlay(&handle, "ilha", screen_y, screen_x, screen_width, ISLAND_HEIGHT)?;
             create_overlay(&handle, "dock", my + mh - DOCK_HEIGHT, mx, mw, DOCK_HEIGHT)?;
-            for label in ["ilha", "dock"] {
+            create_overlay(&handle, "assistive", my, mx, mw, mh)?;
+            for label in ["ilha", "dock", "assistive"] {
                 if let Some(j) = handle.get_webview_window(label) {
                     let _ = j.set_ignore_cursor_events(true);
                 }
@@ -454,7 +499,7 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            let _ = app.global_shortcut().register("ctrl+alt+space");
+            shortcuts::register_defaults(&handle);
             Ok(())
         })
         .build(tauri::generate_context!())

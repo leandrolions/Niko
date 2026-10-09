@@ -1643,7 +1643,7 @@ export default function Finances() {
   const [mode, setMode] = useState<Mode>("competencia");
   const [newItem, setNew] = useState(false);
   const [importData, setImport] = useState(false);
-  // An entry requires an account; create one first, then resume the requested action.
+  // Create an account before recording the requested transaction.
   const [accountBefore, setAccountBefore] = useState<"transacao" | "importar" | "conta" | null>(null);
   const fin = useFinances();
   const hasAccount = fin.contas.some((c) => !c.arquivada);

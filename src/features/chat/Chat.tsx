@@ -203,11 +203,11 @@ export default function Chat() {
     return () => window.removeEventListener(EVENT_NEW, onNew);
   }, []);
 
-  const typingAlgo = text.length > 0;
+  const typingSomething = text.length > 0;
   useEffect(() => {
-    AGENTS.forEach((a) => listen(a, typingAlgo));
+    AGENTS.forEach((a) => listen(a, typingSomething));
     return () => AGENTS.forEach((a) => listen(a, false));
-  }, [typingAlgo, listen]);
+  }, [typingSomething, listen]);
 
   const [activeMention, setActiveMention] = useState(0);
   const mentions = useMemo(() => {

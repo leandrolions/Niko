@@ -37,6 +37,24 @@ test("Return greetings require thirty minutes away or sleep and renewed user act
   assert.deepEqual(returnedAfterAbsence(minute, 5 * minute, true), { ausente: true, voltou: false });
 });
 
+test("Returning to the PC greets once per day, reports long absences and avoids interrupting work", async () => {
+  const { reactAReturn } = await server.ssrLoadModule("/src/windows/island/animations/useDailyGreeting.ts");
+  const time = 3_600_000;
+  const base = { jaSaudouHoje: false, ausenciaMs: time, naoPerturbe: false, ilhaEmUso: false };
+  assert.equal(reactAReturn(base), "saudar");
+  assert.equal(reactAReturn({ ...base, naoPerturbe: true }), "nada");
+  assert.equal(reactAReturn({ ...base, ilhaEmUso: true }), "esperar");
+  assert.equal(reactAReturn({ ...base, jaSaudouHoje: true }), "nada");
+  assert.equal(reactAReturn({ ...base, jaSaudouHoje: true, ausenciaMs: 3 * time }), "boasVindas");
+});
+
+test("The greeting subtitle describes today’s items", async () => {
+  const { T } = await server.ssrLoadModule("/src/i18n/ptBR.ts");
+  assert.equal(T.ilha.saudacao.hoje({ tarefas: 3, habitos: 1 }), "Hoje: 3 tarefas e 1 hábito.");
+  assert.equal(T.ilha.saudacao.hoje({ tarefas: 1, habitos: 0 }), "Hoje: 1 tarefa.");
+  assert.equal(T.ilha.saudacao.hoje({ tarefas: 0, habitos: 0 }), T.ilha.saudacao.equipe);
+});
+
 test("Scrolling over tabs advances one tab at a time and stops at the edges", () => {
   const tabs = ["hoje", "conexoes", "chat"];
   assert.equal(tabNeighbor(tabs, "hoje", 1), "conexoes");

@@ -54,6 +54,38 @@ export async function request<T>(url: string, headers: Record<string, string>, b
 
 const fromUnix = (s?: number | null) => (s ? new Date(s * 1000).toISOString() : new Date().toISOString());
 
+const LIMIT_PRS_DETALHADOS = 6;
+
+export type CiPr = "sucesso" | "falhou" | "rodando" | "nenhum";
+export type ReviewPr = "pendente" | "aprovado" | "mudancas";
+
+export function ciRuns(runs: { status: string; conclusion: string | null }[]): CiPr {
+  if (runs.length === 0) return "nenhum";
+  if (runs.some((r) => r.status !== "completed")) return "rodando";
+  if (runs.some((r) => r.conclusion === "failure" || r.conclusion === "timed_out" || r.conclusion === "startup_failure")) return "falhou";
+  return "sucesso";
+}
+
+export function reviewAvaliacoes(avaliacoes: { state: string }[]): ReviewPr {
+  const decisivas = avaliacoes.filter((a) => a.state === "APPROVED" || a.state === "CHANGES_REQUESTED");
+  const last = decisivas.at(-1)?.state;
+  return last === "APPROVED" ? "aprovado" : last === "CHANGES_REQUESTED" ? "mudancas" : "pendente";
+}
+
+async function contribuicoesGithub(headers: Record<string, string>): Promise<Record<string, number>> {
+  const query = "query { viewer { contributionsCollection { contributionCalendar { weeks { contributionDays { date contributionCount } } } } } }";
+  const r = await request<{ data?: { viewer?: { contributionsCollection?: { contributionCalendar?: { weeks?: { contributionDays?: { date: string; contributionCount: number }[] }[] } } } }; errors?: unknown[] }>(
+    "https://api.github.com/graphql",
+    headers,
+    { query: query },
+  );
+  const weeks = r.data?.viewer?.contributionsCollection?.contributionCalendar?.weeks;
+  if (r.errors?.length || !weeks) throw new Error("sem_contribuicoes");
+  const byDay: Record<string, number> = {};
+  for (const s of weeks) for (const d of s.contributionDays ?? []) if (d.contributionCount > 0) byDay[d.date] = d.contributionCount;
+  return byDay;
+}
+
 type Reader = (keyValue: string, url?: string) => Promise<unknown>;
 
 const READERS: Record<Service, Reader> = {
@@ -89,12 +121,29 @@ const READERS: Record<Service, Reader> = {
     const h = { authorization: `Bearer ${keyValue}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" };
     const base = "https://api.github.com";
     const selfValue = await request<{ login: string }>(`${base}/user`, h);
-    type Item = { title: string; number: number; repository_url: string; user?: { login: string }; created_at: string; labels?: { name: string }[] };
-    const [repos, prs, issues] = await Promise.all([
+    type Item = { title: string; number: number; repository_url: string; html_url: string; user?: { login: string }; created_at: string; labels?: { name: string }[] };
+    const search = (q: string, n: number) => request<{ items: Item[] }>(`${base}/search/issues?q=${encodeURIComponent(q)}&per_page=${n}`, h);
+    const [repos, meus, toRevisar, issues] = await Promise.all([
       request<{ name: string; full_name: string; language: string | null; stargazers_count: number; updated_at: string; private: boolean }[]>(`${base}/user/repos?sort=updated&per_page=10`, h),
-      request<{ items: Item[] }>(`${base}/search/issues?q=${encodeURIComponent(`is:pr is:open involves:${selfValue.login}`)}&per_page=15`, h),
-      request<{ items: Item[] }>(`${base}/search/issues?q=${encodeURIComponent(`is:issue is:open assignee:${selfValue.login}`)}&per_page=15`, h),
+      search(`is:pr is:open author:${selfValue.login}`, 10),
+      search(`is:pr is:open review-requested:${selfValue.login}`, 10),
+      search(`is:issue is:open assignee:${selfValue.login}`, 15),
     ]);
+    const nameComplete = (url: string) => url.split("/repos/")[1] ?? "";
+    const detalharPr = async (p: Item) => {
+      const repo = nameComplete(p.repository_url);
+      try {
+        const [pr, reviews] = await Promise.all([
+          request<{ head: { sha: string } }>(`${base}/repos/${repo}/pulls/${p.number}`, h),
+          request<{ state: string }[]>(`${base}/repos/${repo}/pulls/${p.number}/reviews?per_page=50`, h).catch(() => []),
+        ]);
+        const runs = await request<{ workflow_runs: { status: string; conclusion: string | null }[] }>(`${base}/repos/${repo}/actions/runs?head_sha=${pr.head.sha}&per_page=20`, h).catch(() => ({ workflow_runs: [] }));
+        return { ci: ciRuns(runs.workflow_runs), revisao: reviewAvaliacoes(reviews) };
+      } catch {
+        return { ci: "nenhum" as const, revisao: "pendente" as const };
+      }
+    };
+    const details = await Promise.all(meus.items.slice(0, LIMIT_PRS_DETALHADOS).map(detalharPr));
     const executions = await Promise.all(
       repos.slice(0, 4).map((r) =>
         request<{ workflow_runs: { name: string; head_branch: string; status: string; conclusion: string | null; run_started_at: string; updated_at: string }[] }>(`${base}/repos/${r.full_name}/actions/runs?per_page=5`, h)
@@ -102,19 +151,25 @@ const READERS: Record<Service, Reader> = {
           .catch(() => []),
       ),
     );
-    const events = await request<{ type: string; created_at: string; payload?: { size?: number; commits?: unknown[] } }[]>(`${base}/users/${selfValue.login}/events?per_page=100`, h).catch(() => []);
-    const commitsByDay: Record<string, number> = {};
-    for (const ev of events) {
-      if (ev.type !== "PushEvent") continue;
-      const day = new Date(ev.created_at).toLocaleDateString("sv-SE");
-      commitsByDay[day] = (commitsByDay[day] ?? 0) + (ev.payload?.size ?? ev.payload?.commits?.length ?? 1);
-    }
+    const commitsByDay = await contribuicoesGithub(h).catch(async () => {
+      const events = await request<{ type: string; created_at: string; payload?: { size?: number; commits?: unknown[] } }[]>(`${base}/users/${selfValue.login}/events?per_page=100`, h).catch(() => []);
+      const byDay: Record<string, number> = {};
+      for (const ev of events) {
+        if (ev.type !== "PushEvent") continue;
+        const day = new Date(ev.created_at).toLocaleDateString("sv-SE");
+        byDay[day] = (byDay[day] ?? 0) + (ev.payload?.size ?? ev.payload?.commits?.length ?? 1);
+      }
+      return byDay;
+    });
     const repo = (url: string) => url.split("/").pop() ?? "";
+    const toList = (p: Item, type: "meu" | "revisar", extra: { ci: CiPr; revisao: ReviewPr } = { ci: "nenhum", revisao: "pendente" }) => ({
+      titulo: p.title, repo: repo(p.repository_url), numero: p.number, autor: p.user?.login ?? "", data: p.created_at, url: p.html_url, tipo: type, ...extra,
+    });
     return {
       usuario: selfValue.login,
       commitsPorDia: commitsByDay,
       repositorios: repos.map((r) => ({ nome: r.name, linguagem: r.language ?? "", estrelas: r.stargazers_count, atualizado: r.updated_at, privado: r.private })),
-      prs: prs.items.map((p) => ({ titulo: p.title, repo: repo(p.repository_url), numero: p.number, autor: p.user?.login ?? "", revisao: "pendente", data: p.created_at })),
+      prs: [...toRevisar.items.map((p) => toList(p, "revisar")), ...meus.items.map((p, i) => toList(p, "meu", details[i]))],
       issues: issues.items.map((i) => ({ titulo: i.title, repo: repo(i.repository_url), numero: i.number, rotulos: (i.labels ?? []).map((l) => l.name), data: i.created_at })),
       actions: executions
         .flat()

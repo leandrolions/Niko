@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { useMotionPreferences } from "./useMotionPreferences";
 import { Character } from "../../../characters/Character";
@@ -8,7 +8,8 @@ import { playSound } from "../../../bridge/sounds";
 import { releaseSystemInitial } from "../../../desktop/desktop";
 import { useInterface } from "../../../state/interface";
 import { hasUpdates } from "../../../utils/releaseNotes";
-import { greeting } from "../../../utils/dates";
+import { todayISO, greeting } from "../../../utils/dates";
+import { habitCompleted, tasksDay, useRoutine } from "../../../state/routine";
 import { T } from "../../../i18n/ptBR";
 import type { AgentId } from "../../../types";
 import "./greeting.css";
@@ -88,28 +89,57 @@ function Member({ agente: agent, indice: index, fase: phase, reduzido: reduced }
   );
 }
 
+function summaryToday(): { tarefas: number; habitos: number } {
+  const { tarefas: tasks, habitos: habits, registros: records } = useRoutine.getState();
+  const today = todayISO();
+  const pendingRequests = tasksDay(tasks, today).filter((t) => t.status !== "concluida" && t.status !== "cancelada").length;
+  const habitsPending = habits.filter((h) => !h.arquivado && !habitCompleted(h, records[today]?.[h.id])).length;
+  return { tarefas: pendingRequests, habitos: habitsPending };
+}
+
 export function Greeting({ versaoNova: versionNew, aoTerminar: onFinish }: { versaoNova?: string; aoTerminar: () => void }) {
   const nameValue = useConfig((s) => s.nome.trim().split(/\s+/)[0] ?? "");
   const reduced = useMotionPreferences();
   const [phase, setPhase] = useState<Phase>("entrada");
   const [title] = useState(() => T.ilha.saudacao.titulo(greeting(), nameValue));
+  const [subtitle] = useState(() => (versionNew ? T.ilha.saudacao.atualizado(versionNew) : T.ilha.saudacao.hoje(summaryToday())));
   const exiting = phase === "saida";
-  const subtitle = versionNew ? T.ilha.saudacao.atualizado(versionNew) : T.ilha.saudacao.equipe;
+  const exit = useRef<() => void>(() => undefined);
 
   useEffect(() => {
-    const sound = window.setTimeout(() => void playSound("greet", "personagens"), START_DROP * 1000);
-    const wave = window.setTimeout(() => void playSound("proud", "personagens"), START_WAVE * 1000);
-    const output = window.setTimeout(() => {
+    const silenciosa = useConfig.getState().naoPerturbe;
+    let encerrando = false;
+    const relogios: number[] = [];
+    const stopValue = () => {
+      if (encerrando) return;
+      encerrando = true;
+      relogios.forEach((t) => window.clearTimeout(t));
       setPhase("saida");
       void releaseSystemInitial();
       if (versionNew && hasUpdates(versionNew)) useInterface.getState().navigateTo("atualizacao", { secao: "novidades" });
-    }, OUTPUT_MS);
-    const end = window.setTimeout(onFinish, END_MS);
-    return () => [sound, wave, output, end].forEach((t) => window.clearTimeout(t));
+      relogios.push(window.setTimeout(onFinish, END_MS - OUTPUT_MS));
+    };
+    exit.current = stopValue;
+    if (!silenciosa) {
+      relogios.push(window.setTimeout(() => void playSound("greet", "personagens"), START_DROP * 1000));
+      relogios.push(window.setTimeout(() => void playSound("proud", "personagens"), START_WAVE * 1000));
+    }
+    relogios.push(window.setTimeout(stopValue, OUTPUT_MS));
+    return () => relogios.forEach((t) => window.clearTimeout(t));
   }, [onFinish, versionNew]);
 
   return (
-    <motion.div className="saudacao" role="status" aria-label={`${title}. ${subtitle}`} initial={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.2 } }}>
+    <motion.div
+      className="saudacao"
+      role="button"
+      tabIndex={0}
+      aria-label={`${title}. ${subtitle}. ${T.ilha.saudacao.pular}`}
+      title={T.ilha.saudacao.pular}
+      onClick={() => exit.current()}
+      onKeyDown={(e) => (e.key === "Escape" || e.key === "Enter" || e.key === " ") && exit.current()}
+      initial={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.2 } }}
+    >
       <div className="saudacao-fundo" aria-hidden="true">
         {!reduced && (
           <>

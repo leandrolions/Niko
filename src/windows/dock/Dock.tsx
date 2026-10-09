@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
-import { NATIVE, LABEL, useAreaInteractive, useCursorOutside, useAppsOpen, actWindow, toggleSystemNative, showThumbnails, hideBarWindows, reserveSpaceDock, useStateFront, setDocks, useMonitors, type AppOpen } from "../../desktop/desktop";
+import { Search, X } from "lucide-react";
+import { NATIVE, LABEL, useAreaInteractive, useCursorOutside, useAppsOpen, actWindow, toggleSystemNative, showThumbnails, hideBarWindows, reserveSpaceDock, useStateFront, setDocks, useMonitors, listenEvent, returnFocus, type AppOpen } from "../../desktop/desktop";
+import { AppSearch } from "./AppSearch";
 import { eachDockShowsTheirApps, dockActiveMonitor, myMonitor, ALL_THE_MONITORS } from "./monitors";
 import { groupApps, nameGroup } from "./groups";
 import { AnimatePresence, motion, useMotionValue, useSpring, useTransform, type MotionValue } from "motion/react";
@@ -241,7 +242,15 @@ export function Dock() {
   const alertValue = useAgents((s) => s.alertas[0]);
   const mouseX = useMotionValue(Infinity);
   const [near, setNear] = useState(false);
-  useAreaInteractive([".dock", ".dock-gatilho", ".dock-previa"]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchOpenNow = useRef(false);
+  searchOpenNow.current = searchOpen;
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+  const toggleSearch = useCallback(() => {
+    if (searchOpenNow.current) void returnFocus();
+    setSearchOpen(!searchOpenNow.current);
+  }, []);
+  useAreaInteractive([".dock", ".dock-gatilho", ".dock-previa", ".dock-busca"]);
   useCursorOutside(useCallback(() => setNear(false), []));
   const box = useRef<HTMLDivElement>(null);
 
@@ -280,12 +289,29 @@ export function Dock() {
     if (front.telaCheia) setNear(false);
   }, [front.telaCheia]);
 
+  useEffect(() => {
+    let alive = true;
+    let disable: () => void = () => undefined;
+    void listenEvent("niko://lupa", toggleSearch, true).then((f) => {
+      if (alive) disable = f;
+      else f();
+    });
+    return () => {
+      alive = false;
+      disable();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeHere || front.telaCheia) setSearchOpen(false);
+  }, [activeHere, front.telaCheia]);
+
   if (!activeHere || front.telaCheia) return null;
 
   const width = 90 + (windows.length + (isOpen ? 1 : 0)) * 50;
   const area = { x: (window.innerWidth - width) / 2, y: window.innerHeight - HEIGHT_DOCK, w: width, h: HEIGHT_DOCK };
   const covered = cfg.modo === "inteligente" && (NATIVE ? front.cobre : someoneCovers(area));
-  const hidden = (cfg.modo === "esconder" || covered) && !near;
+  const hidden = (cfg.modo === "esconder" || covered) && !near && !searchOpen;
   const systemFront = isOpen && !minimized && zSystem === nextZ - 1;
   const background = appearance.fundo;
   const IconTab = ICON_ROUTE[route];
@@ -342,6 +368,19 @@ export function Dock() {
         <DockItem mouseX={mouseX} ampliar={cfg.ampliar} rotulo={T.dock.abrir} aoClicar={openNiko} alerta={alertValue ? COLOR_AGENT[alertValue.agenteId] : undefined}>
           <span className="dock-logo"><LogoNiko tamanho={28} /></span>
         </DockItem>
+        <DockItem
+          mouseX={mouseX}
+          ampliar={cfg.ampliar}
+          rotulo={T.dock.busca.botao}
+          estado={searchOpen ? "aberto" : undefined}
+          aoClicar={() => {
+            void playSound(searchOpen ? "close" : "open");
+            toggleSearch();
+          }}
+        >
+          <span className="dock-icone"><Search size={19} /></span>
+        </DockItem>
+        {searchOpen && <AppSearch aoFechar={closeSearch} />}
         {NATIVE ? (
           <WindowsApps mouseX={mouseX} ampliar={cfg.ampliar} ativo={!hidden} monitor={appsMonitor} />
         ) : (

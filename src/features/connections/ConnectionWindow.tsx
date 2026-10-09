@@ -60,7 +60,7 @@ function State({ valor: value }: { valor: string }) {
     ? "sucesso"
     : ["falhou", "erro", "devolvido", "spam", "cancelado"].includes(value)
       ? "erro"
-      : ["rodando", "construindo", "a_caminho", "pendente", "mudancas", "reembolsado"].includes(value)
+      : ["rodando", "construindo", "a_caminho", "pendente", "mudancas", "reembolsado", "revisar"].includes(value)
         ? "alerta"
         : "";
   return <span className={`etiqueta ${tone ? `etiqueta-${tone}` : ""}`}>{E[value] ?? value}</span>;
@@ -157,7 +157,8 @@ function ContentService({ servico: service, aba: tab, filtro: filter, dados: pay
         { titulo: C.titulo, render: (l) => `#${l.numero} ${l.titulo}`, texto: (l) => l.titulo },
         { titulo: C.repo, render: (l) => l.repo, texto: (l) => l.repo },
         { titulo: C.autor, render: (l) => l.autor, texto: (l) => l.autor },
-        { titulo: C.revisao, render: (l) => <State valor={l.revisao} /> },
+        { titulo: C.revisao, render: (l) => <State valor={l.tipo === "revisar" ? "revisar" : l.revisao} /> },
+        { titulo: C.ci, render: (l) => (l.tipo === "revisar" || !l.ci ? "" : <State valor={l.ci} />) },
         { titulo: C.data, render: (l) => scheduleRelative(l.data), direita: true },
       ]} />;
     if (tab === "issues")
@@ -527,6 +528,9 @@ export function ConnectionWindow({ janela: windowValue }: { janela: StateWindow 
   useEffect(() => {
     if (activeNow) void search(false);
   }, [activeNow, search]);
+  useEffect(() => {
+    if (!windowValue.minimizada) useCommunication.getState().markFailuresViews(windowValue.id);
+  }, [windowValue.id, windowValue.minimizada]);
   const onChangeGeometry = useCallback((g: StateWindow["geometria"]) => updateWindow(windowValue.id, { geometria: g }), [updateWindow, windowValue.id]);
 
   if (!connection || windowValue.minimizada) return null;

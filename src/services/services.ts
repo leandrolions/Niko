@@ -235,6 +235,7 @@ async function adjustConnections() {
 }
 
 const nextRead = new Map<ServiceId, number>();
+const READ_WITH_CI_RUNNING_MS = 60_000;
 const atRead = new Set<ServiceId>();
 const views = new Map<ServiceId, Set<string>>();
 
@@ -245,7 +246,13 @@ export async function updateConnectionNow(id: ServiceId, force = true) {
   try {
     const payload = await connectionsBridge.ler(id, force);
     communication.updateConnection(id, { ultimaAtualizacao: new Date().toISOString(), resumo: summary(id, payload), status: "conectado" });
-    if (id === "github") storeCommits((payload as DataGithub).commitsPorDia ?? {});
+    if (id === "github") {
+      const g = payload as DataGithub;
+      storeCommits(g.commitsPorDia ?? {});
+      if (g.actions.some((a) => a.status === "rodando") || g.prs.some((p) => p.ci === "rodando")) {
+        nextRead.set(id, Math.min(nextRead.get(id) ?? Infinity, Date.now() + READ_WITH_CI_RUNNING_MS));
+      }
+    }
     const occurrences = getOccurrences(id, payload);
     const known = views.get(id);
     if (!known) {

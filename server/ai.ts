@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { readSecret, writeSecret, deleteSecret } from "./secrets";
+import { createThoughtFilter } from "./thought";
 
 export type TypeProvider = "anthropic" | "openai_compativel";
 
@@ -318,6 +319,7 @@ export async function* chat(providerId: string, system: string, messages: Messag
     let hadText = false;
     let hadReasoning = false;
     let trimmed = false;
+    const thought = createThoughtFilter();
     arm(60000);
     for await (const data of linesSse(response.body)) {
       arm(60000);
@@ -357,8 +359,12 @@ export async function* chat(providerId: string, system: string, messages: Messag
       } else {
         const selection = (json.choices as { finish_reason?: string | null; delta?: { content?: string; reasoning_content?: string; reasoning?: string; tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[] | undefined)?.[0];
         if (selection?.delta?.content) {
-          yield { tipo: "texto", texto: selection.delta.content };
-          hadText = true;
+          const visible = thought.receive(selection.delta.content);
+          if (thought.hasThought()) hadReasoning = true;
+          if (visible) {
+            yield { tipo: "texto", texto: visible };
+            hadText = true;
+          }
         }
         if (selection?.delta?.reasoning_content || selection?.delta?.reasoning) hadReasoning = true;
         if (selection?.finish_reason === "length") trimmed = true;
@@ -376,6 +382,11 @@ export async function* chat(providerId: string, system: string, messages: Messag
           output = usage.completion_tokens ?? output;
         }
       }
+    }
+    const restVisible = thought.finish();
+    if (restVisible) {
+      yield { tipo: "texto", texto: restVisible };
+      hadText = true;
     }
     for (const [index, c] of [...callsCompatible.entries()].sort((a, b) => a[0] - b[0])) {
       if (c.nome) yield { tipo: "ferramenta", chamada: { id: c.id || `chamada_${index}_${randomUUID().slice(0, 6)}`, nome: c.nome, argumentos: readArguments(c.json) } };

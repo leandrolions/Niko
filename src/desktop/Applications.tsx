@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { AnimatePresence } from "motion/react";
 import { Island } from "../windows/island/Island";
 import { Dock } from "../windows/dock/Dock";
+import { AssistiveTouch } from "../windows/assistive/AssistiveTouch";
 import { SystemWindow } from "../windows/system/SystemWindow";
 import { ConnectionWindow } from "../features/connections/ConnectionWindow";
 import { GlobalSearch } from "../features/search/GlobalSearch";
@@ -13,13 +14,15 @@ import { useTheme } from "../windows/desktop/useTheme";
 import { useShortcuts } from "../windows/desktop/useShortcuts";
 import { useServices } from "../services/services";
 import { useWindowPreferences } from "../services/useWindowPreferences";
-import { windowCurrent, listenCommands, listenEvent, synchronizeStartWithWindows } from "./desktop";
+import { setMonitorIsland, windowCurrent, listenCommands, listenEvent, synchronizeStartWithWindows } from "./desktop";
 import { useSynchronization } from "./synchronization";
+import { useShortcutsIsland, useGlobalShortcuts } from "./useGlobalShortcuts";
 
 export function AppSystem() {
   useTheme();
   useWindowPreferences();
   useShortcuts();
+  useGlobalShortcuts();
   useSynchronization();
   const windows = useInterface((s) => s.janelasConexao);
   const first = useConfig((s) => s.primeiraExecucaoFeita);
@@ -69,10 +72,19 @@ function useShowOnMount() {
   }, []);
 }
 
+function useMonitorIsland() {
+  const monitor = useConfig((s) => s.ilha.monitor);
+  useEffect(() => {
+    void setMonitorIsland(monitor);
+  }, [monitor]);
+}
+
 export function AppIsland() {
   useShowOnMount();
+  useMonitorIsland();
   useTheme();
   useSynchronization();
+  useShortcutsIsland();
   useServices();
   return (
     <div className="area-sobreposta">
@@ -91,4 +103,16 @@ export function AppDock() {
       <Dock />
     </div>
   );
+}
+
+export function AppAssistive() {
+  useTheme();
+  useSynchronization();
+  const active = useConfig((s) => s.assistive.ativo);
+  useEffect(() => {
+    let alive = true;
+    void windowCurrent().then((j) => { if (alive) return active ? j.show() : j.hide(); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [active]);
+  return <div className="area-sobreposta"><AssistiveTouch /></div>;
 }

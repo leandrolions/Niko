@@ -1,6 +1,6 @@
-export type CodingTool = "claude" | "codex" | "copilot" | "opencode" | "antigravity" | "kimi";
+export type CodingTool = "claude" | "codex" | "copilot" | "opencode" | "antigravity" | "kimi" | "gemini" | "amp";
 
-export const TOOLS_CODE: CodingTool[] = ["claude", "codex", "copilot", "opencode", "antigravity", "kimi"];
+export const TOOLS_CODE: CodingTool[] = ["claude", "codex", "copilot", "opencode", "antigravity", "kimi", "gemini", "amp"];
 
 export const TOOLS_THAT_APPROVE: CodingTool[] = ["claude", "codex", "copilot"];
 
@@ -62,7 +62,10 @@ export const claudeCode = {
   instalar: () => request<{ caminho: string; copia: string | null }>("instalar", { method: "POST", body: JSON.stringify({ confirmacao: "INSTALAR" }) }),
   remover: () => request<{ caminho: string; copia: string | null }>("remover", { method: "POST", body: JSON.stringify({ confirmacao: "REMOVER" }) }),
   decidir: (requestId: string, decision: "allow" | "deny" | "terminal", rule?: RuleSuggested) => request<{ ok: boolean }>("decisao", { method: "POST", body: JSON.stringify({ pedidoId: requestId, decisao: decision, regra: rule }) }),
+  responder: (requestId: string, responses: number[][]) => request<{ ok: boolean }>("decisao", { method: "POST", body: JSON.stringify({ pedidoId: requestId, decisao: "allow", respostas: responses }) }),
   abrir: (cwd: string, how: "vscode" | "pasta") => request<{ ok: boolean }>("abrir", { method: "POST", body: JSON.stringify({ cwd, como: how }) }),
+  terminal: (session: string) => request<{ ok: boolean }>("terminal", { method: "POST", body: JSON.stringify({ sessao: session }) }),
+  abrirArquivo: (cwd: string, file: string) => request<{ ok: boolean }>("abrir", { method: "POST", body: JSON.stringify({ cwd, como: "arquivo", arquivo: file }) }),
 };
 
 async function requestAgents<T>(path: string, options: RequestInit = {}): Promise<T> {

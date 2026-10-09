@@ -464,9 +464,9 @@ function BlockReviews() {
           <span className="etiqueta etiqueta-alerta">{describeDistance(exam.data)}</span>
         </div>
       )}
-      <div className="coluna" style={{ gap: 4 }}>
+      <div className="coluna inicio-revisoes-grafico">
         <span className="rotulo-secao">{T.inicio.ultimos7}</span>
-        <BarsVertical altura={64} formatar={(v) => `${v}`} barras={last.map((d) => ({ rotulo: formatDateString(d, "EEEEE"), valor: (studies.registroRevisoes.find((r) => r.data === d)?.quantidade ?? 0) + Math.round((minutes.get(d) ?? 0) / 25), detalhe: `${studies.registroRevisoes.find((r) => r.data === d)?.quantidade ?? 0} cartões, ${minutes.get(d) ?? 0} min` }))} />
+        <BarsVertical altura="auto" formatar={(v) => `${v}`} barras={last.map((d) => ({ rotulo: formatDateString(d, "EEEEE"), valor: (studies.registroRevisoes.find((r) => r.data === d)?.quantidade ?? 0) + Math.round((minutes.get(d) ?? 0) / 25), detalhe: `${studies.registroRevisoes.find((r) => r.data === d)?.quantidade ?? 0} cartões, ${minutes.get(d) ?? 0} min` }))} />
       </div>
       <Button variante={n > 0 ? "primario" : "secundario"} disabled={n === 0} onClick={() => navigateTo("estudos", { aba: "revisoes", sessao: "1" })}>{T.inicio.revisar}</Button>
     </div>

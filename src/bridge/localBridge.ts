@@ -182,6 +182,19 @@ export interface ItemTray {
   icone: string | null;
 }
 
+export interface AppInstalled {
+  id: string;
+  nome: string;
+  admin: boolean;
+}
+
+export interface IconApp {
+  id: string;
+  icone: string | null;
+}
+
+export type CommandSystem = "rede" | "wifi" | "bluetooth" | "som" | "tela" | "configuracoes" | "atualizacoes" | "tarefas" | "adaptadores" | "terminal" | "arquivos" | "painel";
+
 export type TargetAudio = "saida" | "entrada";
 export type ToolWindows = "captura" | "teclado" | "iniciar" | "papelDeParede";
 export type ActionPower = "bloquear" | "suspender" | "reiniciar" | "desligar";
@@ -209,10 +222,18 @@ export const control = {
   abrirDaBandeja: (path: string) => send("/controle/bandeja", { caminho: path }),
   pastaDaBandeja: (path: string) => send("/controle/bandejaPasta", { caminho: path }),
   encerrarDaBandeja: (path: string) => send("/controle/bandejaEncerrar", { caminho: path, confirmacao: "CONFIRMADO" }),
+  apps: (force = false) => send<{ apps: AppInstalled[] | AppInstalled | null }>("/controle/apps", { forcar: force }).then((r) => asList(r.apps)),
+  iconesDeApps: (ids: string[]) => send<{ icones: IconApp[] | IconApp | null }>("/controle/iconesApps", { ids }).then((r) => asList(r.icones)),
+  abrirApp: (id: string, admin = false) => send("/controle/abrirApp", { id, admin }),
+  comandoDoSistema: (command: CommandSystem) => send("/controle/comandoDoSistema", { comando: command }),
 };
 
 export function readUsage(force = false) {
   return request<Usage>(`/consumo${force ? "?forcar=1" : ""}`);
+}
+
+export function readUsageOfficial() {
+  return request<Usage>("/consumo?oficial=1");
 }
 
 export async function* chatAi(

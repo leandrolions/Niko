@@ -2,9 +2,11 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { dataDirectory } from "./ai";
+import { ownerConnection, focusWindowProcess } from "./quickControls";
+import { PATH_STATUS, previousStatus, pathScript, isStatusNiko, ensureScript, receiveStatus, statusNiko } from "./claudeStatus";
 
 export const HEADER_SECRET = "x-niko-gancho";
 const PATH_EVENT = "/ponte/claude/evento";
@@ -12,7 +14,7 @@ const LIMIT_BODY = 2 * 1024 * 1024;
 const LIMIT_FIELD = 4000;
 const LIMIT_RESPONSE_FINAL = 12000;
 const WAIT_DECISION_MS = 110_000;
-const TIME_HOOK_QUICK = 5;
+const TIME_HOOK_QUICK = 2;
 const TIME_HOOK_DECISION = 120;
 const MAXIMUM_HISTORY = 300;
 const DEPTH_MAXIMUM = 6;
@@ -35,7 +37,7 @@ const FIELDS_DISCARDED = ["tool_response", "tool_result", "transcript_path", "sc
 const TOOLS_THAT_DECIDE = new Set<CodingTool>(["claude", "codex", "copilot"]);
 const MESSAGE_DENIAL = "Negado pelo usuário no Niko.";
 
-export type CodingTool = "claude" | "copilot" | "codex" | "opencode" | "antigravity" | "kimi";
+export type CodingTool = "claude" | "copilot" | "codex" | "opencode" | "antigravity" | "kimi" | "gemini" | "amp";
 
 export interface EventClaude {
   id: string;
@@ -59,9 +61,48 @@ interface Pending {
   temporizador: NodeJS.Timeout;
   sessao: string;
   sugestoes: RuleSuggested[];
+  pergunta: ReturnType<typeof perguntasRequest>;
 }
 
 const projectsKnown = new Set<string>();
+const LIMIT_RESPONSE = 2000;
+
+interface PerguntaClaude {
+  question: string;
+  multiSelect: boolean;
+  rotulos: string[];
+}
+
+export function perguntasRequest(payload: Record<string, unknown>): { entrada: Record<string, unknown>; perguntas: PerguntaClaude[] } | null {
+  if (payload.tool_name !== "AskUserQuestion" || !payload.tool_input || typeof payload.tool_input !== "object") return null;
+  const input = payload.tool_input as Record<string, unknown>;
+  if (!Array.isArray(input.questions) || input.questions.length === 0) return null;
+  const perguntas: PerguntaClaude[] = [];
+  for (const q of input.questions) {
+    const p = q as { question?: unknown; multiSelect?: unknown; options?: unknown };
+    if (typeof p?.question !== "string" || !p.question || !Array.isArray(p.options)) return null;
+    const labels = p.options.map((o) => (o as { label?: unknown })?.label).filter((l): l is string => typeof l === "string" && l.length > 0);
+    if (labels.length === 0) return null;
+    perguntas.push({ question: p.question, multiSelect: p.multiSelect === true, rotulos: labels });
+  }
+  return { entrada: input, perguntas };
+}
+
+export function responsesValid(perguntas: PerguntaClaude[], responses: unknown): Record<string, string> {
+  if (!Array.isArray(responses) || responses.length !== perguntas.length) throw new Error("respostas_invalidas");
+  const output: Record<string, string> = {};
+  perguntas.forEach((p, i) => {
+    const indices = responses[i];
+    if (!Array.isArray(indices) || indices.length === 0 || (!p.multiSelect && indices.length !== 1)) throw new Error("respostas_invalidas");
+    if (indices.some((x) => !Number.isInteger(x) || x < 0 || x >= p.rotulos.length) || new Set(indices).size !== indices.length) throw new Error("respostas_invalidas");
+    const escolhidas = (indices as number[]).map((x) => p.rotulos[x]);
+    if (escolhidas.length > 1 && escolhidas.some((r) => r.includes(","))) throw new Error("respostas_invalidas");
+    const text = escolhidas.join(",");
+    if (text.length > LIMIT_RESPONSE) throw new Error("respostas_invalidas");
+    output[p.question] = text;
+  });
+  return output;
+}
 
 function rulesSuggested(payload: Record<string, unknown>): RuleSuggested[] {
   const list = Array.isArray(payload.permission_suggestions) ? payload.permission_suggestions : [];
@@ -164,7 +205,14 @@ function withoutHooksNiko(payload: Settings): Settings {
     else delete hooks[eventValue];
   }
   if (Object.keys(hooks).length === 0) delete copy.hooks;
-  return copy;
+  return withoutStatusNiko(copy);
+}
+
+function withoutStatusNiko(payload: Settings): Settings {
+  if (!isStatusNiko(payload.statusLine)) return payload;
+  const previous = previousStatus(payload.statusLine);
+  const { statusLine: _niko, ...rest } = payload;
+  return previous ? { ...rest, statusLine: previous } : rest;
 }
 
 function hasHooksNiko(payload: Settings): Settings {
@@ -187,11 +235,32 @@ function hasHooksNiko(payload: Settings): Settings {
       },
     ];
   }
-  return { ...clean, hooks };
+  const previous = clean.statusLine && typeof clean.statusLine === "object" ? (clean.statusLine as Record<string, unknown>) : undefined;
+  return { ...clean, hooks, statusLine: statusNiko(previous, port(), key) };
 }
 
 function hideSecret(text: string) {
   return text.split(secret()).join("••••••••");
+}
+
+function statusCurrent(value: unknown) {
+  if (!isStatusNiko(value)) return false;
+  ensureScript();
+  const expected = statusNiko(previousStatus(value), port(), secret()).command;
+  return (value as { command: string }).command === expected && existsSync(pathScript());
+}
+
+export function isRouteStatus(path: string) {
+  return path === PATH_STATUS;
+}
+
+export async function receiveStatusClaude(req: IncomingMessage, res: ServerResponse) {
+  if (req.headers.origin || !secretMatches(req.headers[HEADER_SECRET])) {
+    res.statusCode = 403;
+    return res.end();
+  }
+  await readBodyJson(req).then(receiveStatus).catch(() => undefined);
+  respondEmpty(res);
 }
 
 export function stateInstallation() {
@@ -209,8 +278,8 @@ export function stateInstallation() {
     .flatMap((g) => (Array.isArray((g as { hooks?: unknown[] })?.hooks) ? (g as { hooks: unknown[] }).hooks : []))
     .filter(isHookNiko);
   const current = (h: unknown) => {
-    const g = h as { url: string; headers: Record<string, unknown> };
-    return g.url === urlHook() && g.headers[HEADER_SECRET] === secret();
+    const g = h as { url: string; headers: Record<string, unknown>; timeout?: unknown };
+    return g.url === urlHook() && g.headers[HEADER_SECRET] === secret() && (g.timeout === TIME_HOOK_QUICK || g.timeout === TIME_HOOK_DECISION);
   };
   const installed = EVENTS_INSTALLED.filter((eventValue) => {
     const groups = hooks[eventValue];
@@ -224,7 +293,7 @@ export function stateInstallation() {
     instalado: installed.length === EVENTS_INSTALLED.length,
     parcial: installed.length > 0 && installed.length < EVENTS_INSTALLED.length,
     eventos: installed,
-    desatualizado: hooksNiko.some((h) => !current(h)),
+    desatualizado: hooksNiko.some((h) => !current(h)) || (installed.length > 0 && !statusCurrent(payload.statusLine)),
     conectado: listeners.size > 0,
   };
 }
@@ -251,6 +320,7 @@ function writeWithCopy(content: Settings) {
 
 export function installHooks(body: Record<string, unknown>) {
   if (body.confirmacao !== "INSTALAR") throw new Error("confirmacao_invalida");
+  ensureScript();
   return writeWithCopy(hasHooksNiko(readSettings().dados));
 }
 
@@ -295,7 +365,7 @@ export function readBodyJson(req: IncomingMessage): Promise<Record<string, unkno
 const EVENTS_WITH_MODEL = new Set(["SessionStart", "UserPromptSubmit", "Stop", "SubagentStop"]);
 const BYTES_END_TRANSCRIPT = 256 * 1024;
 
-/** Read the end of the session transcript and return the model used by the latest assistant reply. */
+/** Lê só o fim do transcript da sessão e devolve o modelo da última resposta do assistente. */
 export function modelTranscript(path: string): string | undefined {
   if (!isAbsolute(path) || !path.endsWith(".jsonl") || path.length > 1000) return undefined;
   let descriptor: number | undefined;
@@ -313,7 +383,7 @@ export function modelTranscript(path: string): string | undefined {
         const model = line.type === "assistant" ? line.message?.model : undefined;
         if (typeof model === "string" && model && !model.startsWith("<")) return model.slice(0, 80);
       } catch {
-        // Skip the partial line at the beginning of the excerpt.
+        // Partial line at the beginning of the read segment.
       }
     }
   } catch {
@@ -349,7 +419,41 @@ export async function receiveEventHook(req: IncomingMessage, res: ServerResponse
   } catch {
     return respondEmpty(res);
   }
+  await remindProcess(req, body);
   processEvent(body, "claude", res);
+}
+
+const processSession = new Map<string, number>();
+const procurando = new Set<string>();
+const LIMIT_SESSIONS_WITH_PROCESS = 50;
+const WAIT_PELO_PROCESS_MS = 700;
+export const searchProcess = { dono: ownerConnection, focar: focusWindowProcess };
+
+/** Identify the process while the hook connection is open so its session terminal can be brought forward. */
+export async function remindProcess(req: IncomingMessage, body: Record<string, unknown>) {
+  const session = typeof body.session_id === "string" ? body.session_id : "";
+  const portClient = req.socket.remotePort;
+  if (!session || !portClient || processSession.has(session) || procurando.has(session)) return;
+  procurando.add(session);
+  const search = searchProcess
+    .dono(portClient, port())
+    .then((pid) => {
+      if (!pid) return;
+      processSession.set(session, pid);
+      if (processSession.size > LIMIT_SESSIONS_WITH_PROCESS) processSession.delete(processSession.keys().next().value as string);
+    })
+    .catch(() => undefined)
+    .finally(() => procurando.delete(session));
+  if (body.hook_event_name === "PermissionRequest") return;
+  await Promise.race([search, new Promise((r) => setTimeout(r, WAIT_PELO_PROCESS_MS))]);
+}
+
+export async function trazerTerminal(body: Record<string, unknown>) {
+  const session = typeof body.sessao === "string" ? body.sessao : "";
+  const pid = processSession.get(session);
+  if (!pid) throw new Error("sem_processo");
+  await searchProcess.focar(pid);
+  return { ok: true };
 }
 
 export function processEvent(body: Record<string, unknown>, tool: CodingTool, res: ServerResponse, onRespondEmpty: (res: ServerResponse) => void = respondEmpty) {
@@ -381,14 +485,21 @@ export function processEvent(body: Record<string, unknown>, tool: CodingTool, re
   const requestId = randomUUID();
   eventValue.pedidoId = requestId;
   const timer = setTimeout(() => stopRequest(requestId, null, "expirou"), WAIT_DECISION_MS);
-  pendingRequests.set(requestId, { res, ferramenta: tool, temporizador: timer, sessao: eventValue.sessao, sugestoes: tool === "claude" ? rulesSuggested(body) : [] });
+  pendingRequests.set(requestId, { res, ferramenta: tool, temporizador: timer, sessao: eventValue.sessao, sugestoes: tool === "claude" ? rulesSuggested(body) : [], pergunta: tool === "claude" ? perguntasRequest(body) : null });
   res.on("close", () => {
     if (pendingRequests.has(requestId)) stopRequest(requestId, null, "cancelado");
   });
   broadcast(eventValue);
 }
 
-function stopRequest(requestId: string, decision: "allow" | "deny" | null, reason: string, rule?: RuleSuggested) {
+function decisionPermission(decision: "allow" | "deny", pending: Pending, rule?: RuleSuggested, responses?: Record<string, string>) {
+  if (decision === "deny") return { behavior: "deny", message: MESSAGE_DENIAL };
+  if (responses && pending.pergunta) return { behavior: "allow", updatedInput: { ...pending.pergunta.entrada, answers: responses } };
+  if (rule) return { behavior: "allow", updatedPermissions: [{ type: "allow", toolName: rule.toolName, ruleContent: rule.ruleContent, behavior: "allow", mode: "local", directories: [] }] };
+  return { behavior: "allow" };
+}
+
+function stopRequest(requestId: string, decision: "allow" | "deny" | null, reason: string, rule?: RuleSuggested, responses?: Record<string, string>) {
   const pending = pendingRequests.get(requestId);
   if (!pending) return false;
   pendingRequests.delete(requestId);
@@ -399,17 +510,7 @@ function stopRequest(requestId: string, decision: "allow" | "deny" | null, reaso
       pending.res.setHeader("content-type", "application/json; charset=utf-8");
       pending.res.end(JSON.stringify(decision === "allow" ? { behavior: "allow" } : { behavior: "deny", message: MESSAGE_DENIAL }));
     } else if (decision) {
-      const body = {
-        hookSpecificOutput: {
-          hookEventName: "PermissionRequest",
-          decision:
-            decision === "deny"
-              ? { behavior: "deny", message: MESSAGE_DENIAL }
-              : rule
-                ? { behavior: "allow", updatedPermissions: [{ type: "allow", toolName: rule.toolName, ruleContent: rule.ruleContent, behavior: "allow", mode: "local", directories: [] }] }
-                : { behavior: "allow" },
-        },
-      };
+      const body = { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: decisionPermission(decision, pending, rule, responses) } };
       pending.res.statusCode = 200;
       pending.res.setHeader("content-type", "application/json; charset=utf-8");
       pending.res.end(JSON.stringify(body));
@@ -430,7 +531,14 @@ export function decideRequest(body: Record<string, unknown>) {
     rule = pendingRequests.get(requestId)?.sugestoes.find((s) => s.toolName === requested.toolName && s.ruleContent === requested.ruleContent);
     if (!rule) throw new Error("regra_invalida");
   }
-  if (!stopRequest(requestId, decision, decision ? "decidido" : "terminal", rule)) throw new Error("pedido_expirou");
+  let responses: Record<string, string> | undefined;
+  if (body.respostas !== undefined) {
+    const pergunta = pendingRequests.get(requestId)?.pergunta;
+    if (decision !== "allow" || rule) throw new Error("decisao_invalida");
+    if (!pergunta) throw new Error(pendingRequests.has(requestId) ? "respostas_invalidas" : "pedido_expirou");
+    responses = responsesValid(pergunta.perguntas, body.respostas);
+  } else if (decision === "allow" && pendingRequests.get(requestId)?.pergunta) throw new Error("respostas_invalidas");
+  if (!stopRequest(requestId, decision, decision ? "decidido" : "terminal", rule, responses)) throw new Error("pedido_expirou");
   return { ok: true };
 }
 
@@ -454,13 +562,21 @@ function openDetached(program: string, args: string[]) {
   child.unref();
 }
 
+export function fileProject(cwd: string, file: unknown): string {
+  if (typeof file !== "string" || !file || file.length > 1000 || /[\u0000-\u001f]/.test(file)) throw new Error("arquivo_invalido");
+  const path = resolve(cwd, file);
+  const relativeValue = relative(cwd, path);
+  if (!relativeValue || relativeValue.startsWith("..") || isAbsolute(relativeValue) || !existsSync(path) || !statSync(path).isFile()) throw new Error("arquivo_invalido");
+  return path;
+}
+
 export function openProject(body: Record<string, unknown>) {
   const cwd = typeof body.cwd === "string" ? body.cwd : "";
   if (!projectsKnown.has(cwd) || !isAbsolute(cwd) || !existsSync(cwd) || !statSync(cwd).isDirectory()) throw new Error("projeto_desconhecido");
-  if (body.como === "vscode") {
+  if (body.como === "vscode" || body.como === "arquivo") {
     const code = pathVsCode();
     if (!code) throw new Error("vscode_nao_encontrado");
-    openDetached(code, [cwd]);
+    openDetached(code, body.como === "arquivo" ? [cwd, fileProject(cwd, body.arquivo)] : [cwd]);
   } else if (body.como === "pasta") {
     openDetached("explorer.exe", [cwd]);
   } else throw new Error("acao_invalida");

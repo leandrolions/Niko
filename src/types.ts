@@ -410,6 +410,7 @@ export interface Connection {
   ultimaAtualizacao?: string;
   resumo: string;
   fixadaNaIlha: boolean;
+  falhasVistasEm?: string;
 }
 
 export interface UsageAi {

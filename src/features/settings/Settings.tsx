@@ -25,6 +25,9 @@ import { ACCENT_DEFAULT } from "../../windows/desktop/useTheme";
 import { EditorPhoto } from "../../components/ProfilePhoto";
 import { BackgroundPicker } from "./BackgroundPicker";
 import { ClaudeCodeSection } from "./ClaudeCodeSection";
+import { AssistiveSection } from "./AssistiveSection";
+import { ShortcutEditor } from "./ShortcutEditor";
+import { NATIVE } from "../../desktop/desktop";
 import { requestGreeting } from "../../windows/island/animations/requestGreeting";
 import type { AgentState, Route } from "../../types";
 
@@ -35,6 +38,7 @@ const ICONS: Record<Section, React.ReactNode> = {
   aparencia: <Palette size={15} />,
   ilha: <PanelTop size={15} />,
   dock: <PanelBottom size={15} />,
+  assistive: <Hand size={15} />,
   pomodoro: <Timer size={15} />,
   agentes: <Users size={15} />,
   sons: <Volume2 size={15} />,
@@ -618,7 +622,10 @@ export default function SettingsValue() {
     ),
     atalhos: (
       <>
-        <NoticeBanner>{T.configuracoes.atalhosDica}</NoticeBanner>
+        <NoticeBanner>{NATIVE ? T.configuracoes.atalhosGlobais.dica : T.configuracoes.atalhosDica}</NoticeBanner>
+        <h3 className="titulo-secao">{T.configuracoes.atalhosGlobais.titulo}</h3>
+        <ShortcutEditor />
+        <h3 className="titulo-secao">{T.configuracoes.atalhosGlobais.internos}</h3>
         <div className="lista">
           {T.configuracoes.listaAtalhos.map(([key, action]) => (
             <div key={key} className="lista-item">
@@ -642,6 +649,7 @@ export default function SettingsValue() {
     ),
     dados: <SectionData />,
     claude: <ClaudeCodeSection />,
+    assistive: <AssistiveSection />,
     sobre: (
       <>
         <p>{T.configuracoes.sobreTexto}</p>

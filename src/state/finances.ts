@@ -369,7 +369,7 @@ function dueAnnual(year: number, monthAnnual: number, day: number): Date {
   return setDate(month, Math.min(day, getDaysInMonth(month)));
 }
 
-/** Mark an elapsed due date in the current period as generated to avoid retroactive charges when creating a recurrence. */
+/** Mark past due dates in the current period as generated to avoid retroactive charges on creation. */
 export function generatedUntilInitial(r: Pick<Recurring, "dia" | "frequencia" | "mesAnual">, today: Date): string | undefined {
   const due = r.frequencia === "anual" && r.mesAnual ? dueAnnual(today.getFullYear(), r.mesAnual, r.dia) : setDate(today, Math.min(r.dia, getDaysInMonth(today)));
   return toISO(due) <= toISO(today) ? toISO(due) : undefined;
@@ -494,7 +494,7 @@ export function simplifyDebts(s: Pick<DataFinances, "pessoas" | "divisoes" | "ac
       sumBy(part.pessoaId, -part.valor);
     }
   }
-  // A positive settlement means the person paid the user; a negative one means the user paid the person.
+  // Acerto positivo: a pessoa pagou o usuário; negativo: o usuário pagou a pessoa.
   for (const a of s.acertos) {
     sumBy(a.pessoaId, a.valor);
     sumBy(EU, -a.valor);

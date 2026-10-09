@@ -91,7 +91,7 @@ export function mountSummary(service: ServiceId, payload: DataService[ServiceId]
       const commits = Object.entries(d.commitsPorDia ?? {}).filter(([day]) => new Date(`${day}T12:00:00`).getTime() >= since).reduce((a, [, n]) => a + n, 0);
       const failures = d.actions.filter((a) => a.status === "falhou").length;
       const lines: Line[] = [
-        ...d.prs.slice(0, 3).map((p) => ({ chave: `pr-${p.repo}-${p.numero}`, principal: `#${p.numero} ${p.titulo}`, secundario: p.repo, estado: p.revisao, quando: p.data })),
+        ...d.prs.slice(0, 3).map((p) => ({ chave: `pr-${p.repo}-${p.numero}`, principal: `#${p.numero} ${p.titulo}`, secundario: p.repo, estado: p.tipo === "revisar" ? "revisar" : p.ci === "falhou" || p.ci === "rodando" ? p.ci : p.revisao, quando: p.data })),
         ...d.actions.slice(0, 6 - Math.min(3, d.prs.length)).map((a) => ({ chave: `ac-${a.repo}-${a.workflow}-${a.data}`, principal: a.workflow, secundario: `${a.repo} . ${a.branch}`, estado: a.status, quando: a.data })),
       ];
       return {
